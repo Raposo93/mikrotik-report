@@ -10,7 +10,13 @@ import sys
 import urllib.error
 from datetime import date, datetime, timezone
 
-from .config import load_common_config, load_mail_config, load_routeros_config
+from .config import (
+    load_common_config,
+    load_mail_config,
+    load_routeros_config,
+    load_run_config,
+)
+from .scheduler import run_foreground
 from .workflows import (
     collect,
     print_range_report,
@@ -34,7 +40,7 @@ def _date_argument(value: str) -> date:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("collect", "report", "report-monthly", "test-report"):
+    for command in ("collect", "report", "report-monthly", "test-report", "run"):
         commands.add_parser(command)
     range_parser = commands.add_parser(
         "range", help="render a persisted historical date range to stdout"
@@ -63,6 +69,21 @@ def main() -> None:
     common = load_common_config()
     if args.command == "range":
         print_range_report(common, args.start, args.end)
+        return
+    if args.command == "run":
+        routeros = load_routeros_config()
+        weekly_mail = load_mail_config()
+        monthly_mail = load_mail_config(monthly=True)
+        run_foreground(
+            load_run_config(),
+            collect_action=lambda current: collect(common, routeros, current),
+            weekly_action=lambda current: send_weekly_reports(
+                common, weekly_mail, current
+            ),
+            monthly_action=lambda current: send_monthly_reports(
+                common, monthly_mail, current
+            ),
+        )
         return
     now = datetime.now(timezone.utc)
     if args.command == "collect":

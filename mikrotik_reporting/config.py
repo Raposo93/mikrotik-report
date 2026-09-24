@@ -40,6 +40,13 @@ class MailConfig:
     sender: str
 
 
+@dataclass(frozen=True)
+class RunConfig:
+    collect_interval_seconds: int
+    weekly_check_interval_seconds: int
+    monthly_check_interval_seconds: int
+
+
 def _required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -59,6 +66,17 @@ def _required_absolute_path(name: str) -> Path:
     if not path.is_absolute():
         raise ValueError(f"{name} must be an absolute path")
     return path
+
+
+def _positive_integer(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer") from error
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
 
 def load_common_config() -> CommonConfig:
@@ -121,4 +139,18 @@ def load_mail_config(*, monthly: bool = False) -> MailConfig:
         notifier=_required_absolute_path("MIKROTIK_REPORT_NOTIFIER"),
         account=os.environ.get("MIKROTIK_REPORT_MAIL_ACCOUNT", ""),
         sender=os.environ.get("MIKROTIK_REPORT_FROM", ""),
+    )
+
+
+def load_run_config() -> RunConfig:
+    return RunConfig(
+        collect_interval_seconds=_positive_integer(
+            "MIKROTIK_COLLECT_INTERVAL_SECONDS", 300
+        ),
+        weekly_check_interval_seconds=_positive_integer(
+            "MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS", 86400
+        ),
+        monthly_check_interval_seconds=_positive_integer(
+            "MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS", 86400
+        ),
     )

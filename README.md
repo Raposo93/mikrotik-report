@@ -7,6 +7,10 @@ mail transport helper; an interactive command renders explicit historical
 date ranges to stdout. Install it on any Linux host that can reach the router;
 no server names or credentials are built into the program.
 
+The `run` command provides the same collection and report-check workflows as
+one long-lived foreground process for service managers and containers. The
+existing one-shot commands and systemd timers remain supported.
+
 The two report sections have different meanings. The local rule measures packets
 discarded by the router's own detection list. Bouncer rules measure traffic
 discarded under CrowdSec decisions; CrowdSec detects and classifies those
@@ -71,6 +75,13 @@ The service user needs write access to its parent directory. The program sets
 the database file to mode `600`. Keep `.env` private as it contains the RouterOS
 password; neither it nor the database belongs in Git.
 
+The persistent `run` mode uses three explicit positive-integer intervals:
+`MIKROTIK_COLLECT_INTERVAL_SECONDS` (default `300`),
+`MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS` (default `86400`), and
+`MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS` (default `86400`). These intervals
+control when the existing workflows are checked; weekly and monthly report
+boundaries still use calendar periods in `MIKROTIK_REPORT_TIMEZONE`.
+
 ## RouterOS detection-event setup
 
 Destination-port rankings use a dedicated in-memory RouterOS log buffer. Do not
@@ -125,7 +136,30 @@ router reboot or buffer overflow before a poll can lose detection events, and
 those events cannot be reconstructed from firewall counters. An empty ranking
 therefore means no events were persisted, not proof that no detections occurred.
 
-## Installation
+## Persistent run mode
+
+Start all periodic work in one foreground process with the complete environment
+configured:
+
+```bash
+cd /path/to/mikrotik-report
+python3 mikrotik_report.py run
+```
+
+Collection, the weekly report check, and the monthly report check each run once
+at startup, sequentially in that order. They then run at their configured
+independent intervals. Jobs never overlap inside the process; if a workflow
+runs past one or more of its deadlines, those missed invocations are skipped
+instead of being started concurrently. The next report check still processes
+all pending completed periods from SQLite.
+
+`SIGINT` and `SIGTERM` request a clean stop. An in-progress workflow is allowed
+to finish before the process exits. Operational failures remain visible and
+cause a non-zero exit so a service manager can apply its restart policy. Do not
+run this mode alongside the timer deployment below, because both provide the
+same scheduling role.
+
+## Installation with systemd timers
 
 The templates are examples; replace `/path/to/mikrotik-report` and `YOUR_USER`
 in all three services. Choose a user that can read `.env` and write the state
@@ -316,8 +350,10 @@ units. The implementation lives in the `mikrotik_reporting` package:
 * `rendering.py` produces report text without external side effects;
 * `workflows.py` coordinates transactions, collection, and direct invocation of
   the configured external mail transport;
-* `cli.py` maps the five commands (`collect`, `report`, `report-monthly`,
-  `test-report`, and `range`) to those workflows.
+* `scheduler.py` runs those workflows sequentially on explicit intervals and
+  handles foreground-process termination;
+* `cli.py` maps the six commands (`collect`, `report`, `report-monthly`,
+  `test-report`, `range`, and `run`) to those workflows.
 
 Keep business decisions out of the CLI and SQLite helpers. New report formats
 should consume aggregates through `rendering.py`; new collection data should be
