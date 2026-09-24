@@ -349,7 +349,15 @@ class StorageTests(unittest.TestCase):
                     "INSERT INTO ip_asn_metadata (source_ip) VALUES (?)",
                     ("192.0.2.10",),
                 )
-                self.assertEqual(pending_asn_ips(database), ["192.0.2.10"])
+                self.assertEqual(
+                    pending_asn_ips(
+                        database,
+                        due_at="2026-09-24T10:00:00+00:00",
+                        stale_before="2026-08-25T10:00:00+00:00",
+                        limit=100,
+                    ),
+                    ["192.0.2.10"],
+                )
                 record_asn_lookup(
                     database,
                     ["192.0.2.10"],
@@ -367,7 +375,15 @@ class StorageTests(unittest.TestCase):
                 ).fetchone()[0]
 
             with closing(open_database_readonly(path)) as database:
-                self.assertEqual(pending_asn_ips(database), [])
+                self.assertEqual(
+                    pending_asn_ips(
+                        database,
+                        due_at="2026-09-24T10:00:00+00:00",
+                        stale_before="2026-08-25T10:00:00+00:00",
+                        limit=100,
+                    ),
+                    [],
+                )
             self.assertEqual(metadata_count, 1)
             self.assertEqual(
                 sources,
@@ -380,6 +396,137 @@ class StorageTests(unittest.TestCase):
                     }
                 ],
             )
+
+    def test_asn_retries_back_off_and_success_resets_retry_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.execute(
+                    "INSERT INTO ip_asn_metadata (source_ip) VALUES (?)",
+                    ("192.0.2.10",),
+                )
+                record_asn_lookup(
+                    database,
+                    ["192.0.2.10"],
+                    {},
+                    "2026-09-24T10:00:00+00:00",
+                    retry_base_seconds=60,
+                    retry_max_seconds=120,
+                )
+                first = database.execute(
+                    "SELECT retry_count, next_retry_at FROM ip_asn_metadata"
+                ).fetchone()
+                record_asn_lookup(
+                    database,
+                    ["192.0.2.10"],
+                    {},
+                    "2026-09-24T10:01:00+00:00",
+                    retry_base_seconds=60,
+                    retry_max_seconds=120,
+                )
+                second = database.execute(
+                    "SELECT retry_count, next_retry_at FROM ip_asn_metadata"
+                ).fetchone()
+                record_asn_lookup(
+                    database,
+                    ["192.0.2.10"],
+                    {
+                        "192.0.2.10": {
+                            "asn": "64496",
+                            "organization": "Example Network",
+                        }
+                    },
+                    "2026-09-24T10:03:00+00:00",
+                )
+                success = database.execute(
+                    "SELECT retry_count, next_retry_at, last_error FROM ip_asn_metadata"
+                ).fetchone()
+
+            self.assertEqual(tuple(first), (1, "2026-09-24T10:01:00+00:00"))
+            self.assertEqual(tuple(second), (2, "2026-09-24T10:03:00+00:00"))
+            self.assertEqual(tuple(success), (0, None, None))
+
+    def test_asn_hydration_selects_due_backlog_in_bounded_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.executemany(
+                    "INSERT INTO ip_asn_metadata "
+                    "(source_ip, asn, organization, updated_at, next_retry_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [
+                        ("192.0.2.1", None, None, None, None),
+                        ("192.0.2.2", None, None, None, None),
+                        ("192.0.2.3", None, None, None, None),
+                        (
+                            "192.0.2.4",
+                            "64496",
+                            "Stale Network",
+                            "2026-07-01T00:00:00+00:00",
+                            None,
+                        ),
+                        (
+                            "192.0.2.5",
+                            "64497",
+                            "Fresh Network",
+                            "2026-09-20T00:00:00+00:00",
+                            None,
+                        ),
+                        (
+                            "192.0.2.6",
+                            None,
+                            None,
+                            None,
+                            "2026-09-25T00:00:00+00:00",
+                        ),
+                    ],
+                )
+                first = pending_asn_ips(
+                    database,
+                    due_at="2026-09-24T00:00:00+00:00",
+                    stale_before="2026-08-25T00:00:00+00:00",
+                    limit=2,
+                )
+                database.execute(
+                    "DELETE FROM ip_asn_metadata WHERE source_ip IN (?, ?)",
+                    tuple(first),
+                )
+                second = pending_asn_ips(
+                    database,
+                    due_at="2026-09-24T00:00:00+00:00",
+                    stale_before="2026-08-25T00:00:00+00:00",
+                    limit=2,
+                )
+
+            self.assertEqual(first, ["192.0.2.1", "192.0.2.2"])
+            self.assertEqual(second, ["192.0.2.3", "192.0.2.4"])
+
+    def test_schema_four_failure_is_migrated_to_due_retry_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(sqlite3.connect(path)) as database:
+                database.executescript("""
+                    CREATE TABLE ip_asn_metadata (
+                        source_ip TEXT PRIMARY KEY,
+                        asn TEXT,
+                        organization TEXT,
+                        updated_at TEXT,
+                        last_attempt_at TEXT,
+                        last_error TEXT
+                    );
+                    INSERT INTO ip_asn_metadata
+                    VALUES ('192.0.2.10', NULL, NULL, NULL,
+                            '2026-09-24T10:00:00+00:00', 'temporary failure');
+                    PRAGMA user_version = 4;
+                """)
+            with closing(open_database_existing(path)) as database:
+                row = database.execute(
+                    "SELECT retry_count, next_retry_at FROM ip_asn_metadata"
+                ).fetchone()
+                version = database.execute("PRAGMA user_version").fetchone()[0]
+
+            self.assertEqual(tuple(row), (1, "2026-09-24T10:00:00+00:00"))
+            self.assertEqual(version, SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

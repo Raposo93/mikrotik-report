@@ -65,6 +65,15 @@ so an unavailable or malformed ASN response cannot roll back or fail traffic
 collection. Enabling this requires outbound TCP port 43 from the collecting
 host. No ASN connection is attempted while the option is disabled.
 
+Each collection hydrates at most `MIKROTIK_ASN_BATCH_SIZE` due entries (default
+`100`), so enabling enrichment with historical source IPs drains the backlog
+gradually. Failed or unmapped entries retry with exponential backoff beginning
+at `MIKROTIK_ASN_RETRY_BASE_SECONDS` (default `3600`) and capped by
+`MIKROTIK_ASN_RETRY_MAX_SECONDS` (default `86400`). Successful metadata becomes
+eligible for refresh after `MIKROTIK_ASN_REFRESH_DAYS` (default `30`). These
+values must be positive, and the maximum retry interval cannot be less than the
+base interval.
+
 Use an absolute `MIKROTIK_REPORT_DB` path outside the checkout. The SQLite
 database contains last counter values, current/pending weekly totals, the last
 12 successfully emailed weekly aggregates, and daily aggregates for exact month
@@ -73,10 +82,11 @@ the same database. Daily destination-port counts, daily source-IP detection
 counts, and a bounded cursor of the RouterOS memory entries seen during the
 previous poll are also stored. ASN metadata is normalized into one row per
 source IP rather than copied into historical samples. Each row records the ASN,
-organization, successful metadata update time, latest attempt time, and latest
-error. Failed or unmapped lookups retain the source IP and their attempt state
-so a later hydration or retry workflow can select them explicitly. Source IPs
-are retained only as aggregate keys; full firewall messages,
+organization, successful metadata update time, latest attempt time, next retry
+time, retry count, and latest error. Failed or unmapped lookups retain the
+source IP and are retried by later collector runs when due. A failed refresh
+keeps the last successful metadata available to reports. Source IPs are retained
+only as aggregate keys; full firewall messages,
 destination addresses, interfaces, MAC addresses, and packet lengths are not
 retained. The schema uses SQLite's
 `user_version`; a writing command
@@ -207,10 +217,11 @@ The variables required by `run` are:
   `MIKROTIK_CROWDSEC_RULE_SIGNATURE`, and `MIKROTIK_CROWDSEC_LIST`;
 * mail delivery: `MIKROTIK_REPORT_TO` and `MIKROTIK_REPORT_NOTIFIER`.
 
-The timezone, rule table, detection-log names, report subjects, mail account and
-sender, CA bundle, and scheduling intervals are optional or have documented
-defaults in `.env.example`. Keep the database at the declared persistent path
-and point the notifier at a separately mounted compatible executable:
+The timezone, rule table, detection-log names, ASN enrichment policy, report
+subjects, mail account and sender, CA bundle, and scheduling intervals are
+optional or have documented defaults in `.env.example`. Keep the database at
+the declared persistent path and point the notifier at a separately mounted
+compatible executable:
 
 ```text
 MIKROTIK_REPORT_DB=/var/lib/mikrotik-report/report.sqlite3

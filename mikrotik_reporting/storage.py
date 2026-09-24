@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -23,7 +23,7 @@ from .models import (
     initial_state,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 HISTORY_WEEKS = 12
 
 
@@ -155,11 +155,41 @@ def _migrate_to_4(database: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_to_5(database: sqlite3.Connection) -> None:
+    database.execute("BEGIN IMMEDIATE")
+    try:
+        columns = {
+            row["name"]
+            for row in database.execute("PRAGMA table_info(ip_asn_metadata)")
+        }
+        if "next_retry_at" not in columns:
+            database.execute(
+                "ALTER TABLE ip_asn_metadata ADD COLUMN next_retry_at TEXT"
+            )
+        if "retry_count" not in columns:
+            database.execute(
+                "ALTER TABLE ip_asn_metadata ADD COLUMN retry_count "
+                "INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0)"
+            )
+        database.execute(
+            "UPDATE ip_asn_metadata "
+            "SET next_retry_at = last_attempt_at, retry_count = 1 "
+            "WHERE updated_at IS NULL AND last_attempt_at IS NOT NULL "
+            "AND next_retry_at IS NULL AND retry_count = 0"
+        )
+        database.execute("PRAGMA user_version = 5")
+        database.commit()
+    except Exception:
+        database.rollback()
+        raise
+
+
 MIGRATIONS = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
     4: _migrate_to_4,
+    5: _migrate_to_5,
 }
 
 
@@ -392,11 +422,21 @@ def top_source_detections(
     return results
 
 
-def pending_asn_ips(database: sqlite3.Connection) -> list[str]:
+def pending_asn_ips(
+    database: sqlite3.Connection,
+    due_at: str,
+    stale_before: str,
+    limit: int,
+) -> list[str]:
+    if limit <= 0:
+        raise ValueError("ASN hydration batch limit must be positive")
     rows = database.execute(
         "SELECT source_ip FROM ip_asn_metadata "
-        "WHERE updated_at IS NULL AND last_attempt_at IS NULL "
-        "ORDER BY source_ip"
+        "WHERE (updated_at IS NULL OR updated_at <= ?) "
+        "AND (next_retry_at IS NULL OR next_retry_at <= ?) "
+        "ORDER BY CASE WHEN updated_at IS NULL THEN 0 ELSE 1 END, "
+        "COALESCE(next_retry_at, updated_at, ''), source_ip LIMIT ?",
+        (stale_before, due_at, limit),
     ).fetchall()
     return [row["source_ip"] for row in rows]
 
@@ -408,20 +448,39 @@ def record_asn_lookup(
     attempted_at: str,
     *,
     error: str | None = None,
+    retry_base_seconds: int = 3600,
+    retry_max_seconds: int = 86400,
 ) -> None:
+    attempt_time = datetime.fromisoformat(attempted_at)
     for source_ip in source_ips:
         metadata = results.get(source_ip)
         if metadata is None:
+            row = database.execute(
+                "SELECT retry_count FROM ip_asn_metadata WHERE source_ip = ?",
+                (source_ip,),
+            ).fetchone()
+            if row is None:
+                continue
+            retry_count = row["retry_count"] + 1
+            exponent = min(retry_count - 1, 30)
+            delay = min(retry_base_seconds * (2**exponent), retry_max_seconds)
+            next_retry_at = (attempt_time + timedelta(seconds=delay)).isoformat()
             database.execute(
-                "UPDATE ip_asn_metadata SET last_attempt_at = ?, last_error = ? "
-                "WHERE source_ip = ? AND updated_at IS NULL",
-                (attempted_at, (error or "No ASN mapping returned")[:500], source_ip),
+                "UPDATE ip_asn_metadata SET last_attempt_at = ?, next_retry_at = ?, "
+                "retry_count = ?, last_error = ? WHERE source_ip = ?",
+                (
+                    attempted_at,
+                    next_retry_at,
+                    retry_count,
+                    (error or "No ASN mapping returned")[:500],
+                    source_ip,
+                ),
             )
             continue
         database.execute(
             "UPDATE ip_asn_metadata SET asn = ?, organization = ?, "
-            "updated_at = ?, last_attempt_at = ?, last_error = NULL "
-            "WHERE source_ip = ? AND updated_at IS NULL",
+            "updated_at = ?, last_attempt_at = ?, next_retry_at = NULL, "
+            "retry_count = 0, last_error = NULL WHERE source_ip = ?",
             (
                 metadata["asn"],
                 metadata["organization"],

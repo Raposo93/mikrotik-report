@@ -176,10 +176,17 @@ def process_monthly_reports(
 def _enrich_pending_asns(
     database: sqlite3.Connection, config: ASNConfig, now: datetime
 ) -> tuple[int, int]:
-    source_ips = pending_asn_ips(database)
+    attempt_time = now.astimezone(timezone.utc)
+    attempted_at = attempt_time.isoformat()
+    stale_before = (attempt_time - timedelta(days=config.refresh_days)).isoformat()
+    source_ips = pending_asn_ips(
+        database,
+        due_at=attempted_at,
+        stale_before=stale_before,
+        limit=config.batch_size,
+    )
     if not source_ips:
         return 0, 0
-    attempted_at = now.astimezone(timezone.utc).isoformat()
     try:
         results = lookup_asns(source_ips, timeout_seconds=config.timeout_seconds)
     except (OSError, ValueError) as error:
@@ -190,11 +197,20 @@ def _enrich_pending_asns(
                 {},
                 attempted_at,
                 error=f"{type(error).__name__}: {error}",
+                retry_base_seconds=config.retry_base_seconds,
+                retry_max_seconds=config.retry_max_seconds,
             )
         print(f"ASN enrichment failed: {error}", file=sys.stderr)
         return 0, len(source_ips)
     with database:
-        record_asn_lookup(database, source_ips, results, attempted_at)
+        record_asn_lookup(
+            database,
+            source_ips,
+            results,
+            attempted_at,
+            retry_base_seconds=config.retry_base_seconds,
+            retry_max_seconds=config.retry_max_seconds,
+        )
     return len(results), len(source_ips) - len(results)
 
 

@@ -266,7 +266,15 @@ class WorkflowTests(unittest.TestCase):
 
             lookup.assert_not_called()
             with closing(open_database_readonly(path)) as database:
-                self.assertEqual(pending_asn_ips(database), ["192.0.2.31"])
+                self.assertEqual(
+                    pending_asn_ips(
+                        database,
+                        due_at="2026-09-19T11:00:00+00:00",
+                        stale_before="2026-08-20T11:00:00+00:00",
+                        limit=100,
+                    ),
+                    ["192.0.2.31"],
+                )
 
     def test_enabled_asn_enrichment_is_persisted_and_reused(self) -> None:
         event: DetectionEvent = {
@@ -358,14 +366,135 @@ class WorkflowTests(unittest.TestCase):
                     "SELECT source_ip, detections FROM daily_source_detections"
                 ).fetchone()
                 metadata = database.execute(
-                    "SELECT asn, last_attempt_at, last_error "
+                    "SELECT asn, last_attempt_at, next_retry_at, retry_count, "
+                    "last_error "
                     "FROM ip_asn_metadata WHERE source_ip = ?",
                     ("192.0.2.31",),
                 ).fetchone()
             self.assertEqual(tuple(detection), ("192.0.2.31", 1))
             self.assertIsNone(metadata["asn"])
             self.assertIsNotNone(metadata["last_attempt_at"])
+            self.assertEqual(metadata["next_retry_at"], "2026-09-19T12:00:00+00:00")
+            self.assertEqual(metadata["retry_count"], 1)
             self.assertIn("service unavailable", metadata["last_error"])
+
+    def test_asn_failure_is_retried_when_due_and_then_hydrated(self) -> None:
+        event: DetectionEvent = {
+            "fingerprint": "new",
+            "day": "2026-09-19",
+            "source_ip": "192.0.2.31",
+            "protocol": "tcp",
+            "destination_port": 23,
+        }
+        batch: DetectionBatch = {"fingerprints": ["new"], "events": [event]}
+        times = (
+            datetime(2026, 9, 19, 10, tzinfo=timezone.utc),
+            datetime(2026, 9, 19, 11, tzinfo=timezone.utc),
+            datetime(2026, 9, 19, 11, 30, tzinfo=timezone.utc),
+            datetime(2026, 9, 19, 12, tzinfo=timezone.utc),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with (
+                patch(
+                    "mikrotik_reporting.workflows.fetch_snapshot",
+                    side_effect=(
+                        sample(100, 10000),
+                        sample(110, 11000),
+                        sample(120, 12000),
+                        sample(130, 13000),
+                    ),
+                ),
+                patch(
+                    "mikrotik_reporting.workflows.fetch_detection_batch",
+                    side_effect=(
+                        {"fingerprints": [], "events": []},
+                        batch,
+                        batch,
+                        batch,
+                    ),
+                ),
+                patch(
+                    "mikrotik_reporting.workflows.lookup_asns",
+                    side_effect=(
+                        OSError("temporary outage"),
+                        {
+                            "192.0.2.31": {
+                                "asn": "64496",
+                                "organization": "Example Network",
+                            }
+                        },
+                    ),
+                ) as lookup,
+                redirect_stdout(StringIO()),
+                redirect_stderr(StringIO()),
+            ):
+                for instant in times:
+                    collect(common(path), router(), instant, ASNConfig(True))
+
+            self.assertEqual(lookup.call_count, 2)
+            with closing(open_database_readonly(path)) as database:
+                metadata = database.execute(
+                    "SELECT asn, organization, retry_count, next_retry_at, last_error "
+                    "FROM ip_asn_metadata WHERE source_ip = ?",
+                    ("192.0.2.31",),
+                ).fetchone()
+            self.assertEqual(
+                tuple(metadata), ("64496", "Example Network", 0, None, None)
+            )
+
+    def test_stale_asn_metadata_is_refreshed_from_persisted_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.execute(
+                    "INSERT INTO ip_asn_metadata "
+                    "(source_ip, asn, organization, updated_at, last_attempt_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        "192.0.2.31",
+                        "64496",
+                        "Old Network",
+                        "2026-08-01T00:00:00+00:00",
+                        "2026-08-01T00:00:00+00:00",
+                    ),
+                )
+            with (
+                patch(
+                    "mikrotik_reporting.workflows.fetch_snapshot",
+                    return_value=sample(100, 10000),
+                ),
+                patch(
+                    "mikrotik_reporting.workflows.fetch_detection_batch",
+                    return_value={"fingerprints": [], "events": []},
+                ),
+                patch(
+                    "mikrotik_reporting.workflows.lookup_asns",
+                    return_value={
+                        "192.0.2.31": {
+                            "asn": "64497",
+                            "organization": "New Network",
+                        }
+                    },
+                ) as lookup,
+                redirect_stdout(StringIO()),
+            ):
+                collect(
+                    common(path),
+                    router(),
+                    datetime(2026, 9, 24, 10, tzinfo=timezone.utc),
+                    ASNConfig(True, refresh_days=30),
+                )
+
+            lookup.assert_called_once_with(["192.0.2.31"], timeout_seconds=5.0)
+            with closing(open_database_readonly(path)) as database:
+                metadata = database.execute(
+                    "SELECT asn, organization, updated_at FROM ip_asn_metadata"
+                ).fetchone()
+            self.assertEqual(
+                tuple(metadata),
+                ("64497", "New Network", "2026-09-24T10:00:00+00:00"),
+            )
 
     def test_monthly_mail_failure_retries_without_duplicate(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

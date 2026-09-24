@@ -9,7 +9,12 @@ from mikrotik_reporting.config import load_asn_config, load_mail_config, load_ru
 class ConfigTests(unittest.TestCase):
     def test_asn_enrichment_is_disabled_by_default_and_accepts_booleans(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertFalse(load_asn_config().enabled)
+            config = load_asn_config()
+            self.assertFalse(config.enabled)
+            self.assertEqual(config.batch_size, 100)
+            self.assertEqual(config.retry_base_seconds, 3600)
+            self.assertEqual(config.retry_max_seconds, 86400)
+            self.assertEqual(config.refresh_days, 30)
 
         for value in ("1", "true", "YES", "on"):
             with patch.dict(os.environ, {"MIKROTIK_ASN_ENABLED": value}, clear=True):
@@ -20,6 +25,28 @@ class ConfigTests(unittest.TestCase):
             self.assertRaisesRegex(
                 ValueError, "MIKROTIK_ASN_ENABLED must be a boolean"
             ),
+        ):
+            load_asn_config()
+
+    def test_asn_hydration_policy_is_configurable_and_validated(self) -> None:
+        environment = {
+            "MIKROTIK_ASN_ENABLED": "true",
+            "MIKROTIK_ASN_BATCH_SIZE": "25",
+            "MIKROTIK_ASN_RETRY_BASE_SECONDS": "60",
+            "MIKROTIK_ASN_RETRY_MAX_SECONDS": "600",
+            "MIKROTIK_ASN_REFRESH_DAYS": "7",
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            config = load_asn_config()
+        self.assertEqual(config.batch_size, 25)
+        self.assertEqual(config.retry_base_seconds, 60)
+        self.assertEqual(config.retry_max_seconds, 600)
+        self.assertEqual(config.refresh_days, 7)
+
+        environment["MIKROTIK_ASN_RETRY_MAX_SECONDS"] = "30"
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            self.assertRaisesRegex(ValueError, "must be greater than or equal"),
         ):
             load_asn_config()
 

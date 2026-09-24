@@ -51,6 +51,10 @@ class RunConfig:
 class ASNConfig:
     enabled: bool
     timeout_seconds: float = 5.0
+    batch_size: int = 100
+    retry_base_seconds: int = 3600
+    retry_max_seconds: int = 86400
+    refresh_days: int = 30
 
 
 def _required(name: str) -> str:
@@ -172,4 +176,17 @@ def load_run_config() -> RunConfig:
 
 
 def load_asn_config() -> ASNConfig:
-    return ASNConfig(enabled=_boolean("MIKROTIK_ASN_ENABLED"))
+    retry_base_seconds = _positive_integer("MIKROTIK_ASN_RETRY_BASE_SECONDS", 3600)
+    retry_max_seconds = _positive_integer("MIKROTIK_ASN_RETRY_MAX_SECONDS", 86400)
+    if retry_max_seconds < retry_base_seconds:
+        raise ValueError(
+            "MIKROTIK_ASN_RETRY_MAX_SECONDS must be greater than or equal to "
+            "MIKROTIK_ASN_RETRY_BASE_SECONDS"
+        )
+    return ASNConfig(
+        enabled=_boolean("MIKROTIK_ASN_ENABLED"),
+        batch_size=_positive_integer("MIKROTIK_ASN_BATCH_SIZE", 100),
+        retry_base_seconds=retry_base_seconds,
+        retry_max_seconds=retry_max_seconds,
+        refresh_days=_positive_integer("MIKROTIK_ASN_REFRESH_DAYS", 30),
+    )
