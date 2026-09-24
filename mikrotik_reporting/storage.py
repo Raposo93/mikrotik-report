@@ -13,6 +13,7 @@ from .aggregation import next_month
 from .models import (
     METRICS,
     SOURCES,
+    ASNMetadata,
     DetectionBatch,
     Period,
     PortDetection,
@@ -22,7 +23,7 @@ from .models import (
     initial_state,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 HISTORY_WEEKS = 12
 
 
@@ -131,7 +132,35 @@ def _migrate_to_3(database: sqlite3.Connection) -> None:
     """)
 
 
-MIGRATIONS = {1: _migrate_to_1, 2: _migrate_to_2, 3: _migrate_to_3}
+def _migrate_to_4(database: sqlite3.Connection) -> None:
+    database.executescript("""
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS ip_asn_metadata (
+            source_ip TEXT PRIMARY KEY,
+            asn TEXT,
+            organization TEXT,
+            updated_at TEXT,
+            last_attempt_at TEXT,
+            last_error TEXT,
+            CHECK (
+                (asn IS NULL AND organization IS NULL AND updated_at IS NULL)
+                OR
+                (asn IS NOT NULL AND organization IS NOT NULL AND updated_at IS NOT NULL)
+            )
+        );
+        INSERT OR IGNORE INTO ip_asn_metadata (source_ip)
+            SELECT DISTINCT source_ip FROM daily_source_detections;
+        PRAGMA user_version = 4;
+        COMMIT;
+    """)
+
+
+MIGRATIONS = {
+    1: _migrate_to_1,
+    2: _migrate_to_2,
+    3: _migrate_to_3,
+    4: _migrate_to_4,
+}
 
 
 def ensure_schema(database: sqlite3.Connection) -> None:
@@ -272,6 +301,10 @@ def record_detection_batch(
                 "DO UPDATE SET detections = detections + 1",
                 (event["day"], event["source_ip"]),
             )
+            database.execute(
+                "INSERT OR IGNORE INTO ip_asn_metadata (source_ip) VALUES (?)",
+                (event["source_ip"],),
+            )
             recorded += 1
     database.execute("DELETE FROM detection_log_cursor")
     database.executemany(
@@ -322,20 +355,81 @@ def top_source_detections(
         "WHERE type = 'table' AND name = 'daily_source_detections'"
     ).fetchone():
         return []
-    rows = database.execute(
-        "SELECT source_ip, SUM(detections) AS detections "
-        "FROM daily_source_detections WHERE day >= ? AND day < ? "
-        "GROUP BY source_ip "
-        "ORDER BY detections DESC, source_ip LIMIT ?",
-        (start, end, limit),
-    ).fetchall()
-    return [
-        {
+    has_asn_metadata = database.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ip_asn_metadata'"
+    ).fetchone()
+    if has_asn_metadata:
+        rows = database.execute(
+            "SELECT detections.source_ip, SUM(detections.detections) AS detections, "
+            "metadata.asn, metadata.organization "
+            "FROM daily_source_detections AS detections "
+            "LEFT JOIN ip_asn_metadata AS metadata "
+            "ON metadata.source_ip = detections.source_ip "
+            "WHERE detections.day >= ? AND detections.day < ? "
+            "GROUP BY detections.source_ip, metadata.asn, metadata.organization "
+            "ORDER BY SUM(detections.detections) DESC, detections.source_ip LIMIT ?",
+            (start, end, limit),
+        ).fetchall()
+    else:
+        rows = database.execute(
+            "SELECT source_ip, SUM(detections) AS detections, "
+            "NULL AS asn, NULL AS organization "
+            "FROM daily_source_detections WHERE day >= ? AND day < ? "
+            "GROUP BY source_ip "
+            "ORDER BY detections DESC, source_ip LIMIT ?",
+            (start, end, limit),
+        ).fetchall()
+    results: list[SourceDetection] = []
+    for row in rows:
+        item: SourceDetection = {
             "source_ip": row["source_ip"],
             "detections": row["detections"],
         }
-        for row in rows
-    ]
+        if row["asn"] is not None:
+            item["asn"] = row["asn"]
+            item["asn_organization"] = row["organization"]
+        results.append(item)
+    return results
+
+
+def pending_asn_ips(database: sqlite3.Connection) -> list[str]:
+    rows = database.execute(
+        "SELECT source_ip FROM ip_asn_metadata "
+        "WHERE updated_at IS NULL AND last_attempt_at IS NULL "
+        "ORDER BY source_ip"
+    ).fetchall()
+    return [row["source_ip"] for row in rows]
+
+
+def record_asn_lookup(
+    database: sqlite3.Connection,
+    source_ips: list[str],
+    results: dict[str, ASNMetadata],
+    attempted_at: str,
+    *,
+    error: str | None = None,
+) -> None:
+    for source_ip in source_ips:
+        metadata = results.get(source_ip)
+        if metadata is None:
+            database.execute(
+                "UPDATE ip_asn_metadata SET last_attempt_at = ?, last_error = ? "
+                "WHERE source_ip = ? AND updated_at IS NULL",
+                (attempted_at, (error or "No ASN mapping returned")[:500], source_ip),
+            )
+            continue
+        database.execute(
+            "UPDATE ip_asn_metadata SET asn = ?, organization = ?, "
+            "updated_at = ?, last_attempt_at = ?, last_error = NULL "
+            "WHERE source_ip = ? AND updated_at IS NULL",
+            (
+                metadata["asn"],
+                metadata["organization"],
+                attempted_at,
+                attempted_at,
+                source_ip,
+            ),
+        )
 
 
 def queue_completed_months(database: sqlite3.Connection, current: str) -> None:

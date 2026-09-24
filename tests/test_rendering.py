@@ -103,13 +103,19 @@ class RenderingTests(unittest.TestCase):
             period,
             UTC,
             top_sources=[
-                {"source_ip": "192.0.2.10", "detections": 17},
+                {
+                    "source_ip": "192.0.2.10",
+                    "detections": 17,
+                    "asn": "64496",
+                    "asn_organization": "Example Network",
+                },
                 {"source_ip": "192.0.2.20", "detections": 1},
             ],
         )
 
         self.assertIn("Top recurring source IPs", rendered)
         self.assertIn("192.0.2.10", rendered)
+        self.assertIn("AS64496 Example Network", rendered)
         self.assertIn("17 detections", rendered)
         self.assertIn("192.0.2.20", rendered)
         self.assertIn("1 detection", rendered)

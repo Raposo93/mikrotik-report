@@ -11,6 +11,7 @@ import urllib.error
 from datetime import date, datetime, timezone
 
 from .config import (
+    load_asn_config,
     load_common_config,
     load_mail_config,
     load_routeros_config,
@@ -72,11 +73,12 @@ def main() -> None:
         return
     if args.command == "run":
         routeros = load_routeros_config()
+        asn = load_asn_config()
         weekly_mail = load_mail_config()
         monthly_mail = load_mail_config(monthly=True)
         run_foreground(
             load_run_config(),
-            collect_action=lambda current: collect(common, routeros, current),
+            collect_action=lambda current: collect(common, routeros, current, asn),
             weekly_action=lambda current: send_weekly_reports(
                 common, weekly_mail, current
             ),
@@ -87,7 +89,7 @@ def main() -> None:
         return
     now = datetime.now(timezone.utc)
     if args.command == "collect":
-        collect(common, load_routeros_config(), now)
+        collect(common, load_routeros_config(), now, load_asn_config())
     elif args.command == "report":
         send_weekly_reports(common, load_mail_config(), now)
     elif args.command == "report-monthly":

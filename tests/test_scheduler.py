@@ -8,7 +8,7 @@ from unittest.mock import call, patch
 from helpers import at, common, mail, router
 
 from mikrotik_reporting.cli import main
-from mikrotik_reporting.config import RunConfig
+from mikrotik_reporting.config import ASNConfig, RunConfig
 from mikrotik_reporting.scheduler import (
     ScheduledJob,
     _termination_event,
@@ -121,6 +121,7 @@ class SchedulerTests(unittest.TestCase):
         weekly_mail = mail(router_path.parent)
         monthly_mail = mail(router_path.parent)
         schedule = RunConfig(300, 86400, 86400)
+        asn = ASNConfig(False)
         instant = at(24, 12)
 
         def exercise(_config, **actions) -> None:
@@ -137,6 +138,7 @@ class SchedulerTests(unittest.TestCase):
                 side_effect=[weekly_mail, monthly_mail],
             ) as load_mail,
             patch("mikrotik_reporting.cli.load_run_config", return_value=schedule),
+            patch("mikrotik_reporting.cli.load_asn_config", return_value=asn),
             patch("mikrotik_reporting.cli.collect") as collect,
             patch("mikrotik_reporting.cli.send_weekly_reports") as weekly,
             patch("mikrotik_reporting.cli.send_monthly_reports") as monthly,
@@ -147,7 +149,7 @@ class SchedulerTests(unittest.TestCase):
             main()
 
         foreground.assert_called_once()
-        collect.assert_called_once_with(shared, routeros, instant)
+        collect.assert_called_once_with(shared, routeros, instant, asn)
         weekly.assert_called_once_with(shared, weekly_mail, instant)
         monthly.assert_called_once_with(shared, monthly_mail, instant)
         self.assertEqual(load_mail.call_args_list, [call(), call(monthly=True)])

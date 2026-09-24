@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+import sys
 from contextlib import closing
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from .aggregation import (
     apply_snapshot,
@@ -16,7 +17,8 @@ from .aggregation import (
     week_start,
     week_window,
 )
-from .config import CommonConfig, MailConfig, RouterOSConfig
+from .asn import lookup_asns
+from .config import ASNConfig, CommonConfig, MailConfig, RouterOSConfig
 from .models import Period, PortDetection, SourceDetection, empty_period
 from .rendering import (
     render_monthly_report,
@@ -35,7 +37,9 @@ from .storage import (
     open_database,
     open_database_existing,
     open_database_readonly,
+    pending_asn_ips,
     queue_completed_months,
+    record_asn_lookup,
     record_detection_batch,
     retain_sent_week,
     save_day,
@@ -169,7 +173,37 @@ def process_monthly_reports(
         print(f"Sent report for month {start[:7]}")
 
 
-def collect(common: CommonConfig, routeros: RouterOSConfig, now: datetime) -> None:
+def _enrich_pending_asns(
+    database: sqlite3.Connection, config: ASNConfig, now: datetime
+) -> tuple[int, int]:
+    source_ips = pending_asn_ips(database)
+    if not source_ips:
+        return 0, 0
+    attempted_at = now.astimezone(timezone.utc).isoformat()
+    try:
+        results = lookup_asns(source_ips, timeout_seconds=config.timeout_seconds)
+    except (OSError, ValueError) as error:
+        with database:
+            record_asn_lookup(
+                database,
+                source_ips,
+                {},
+                attempted_at,
+                error=f"{type(error).__name__}: {error}",
+            )
+        print(f"ASN enrichment failed: {error}", file=sys.stderr)
+        return 0, len(source_ips)
+    with database:
+        record_asn_lookup(database, source_ips, results, attempted_at)
+    return len(results), len(source_ips) - len(results)
+
+
+def collect(
+    common: CommonConfig,
+    routeros: RouterOSConfig,
+    now: datetime,
+    asn: ASNConfig | None = None,
+) -> None:
     snapshot = fetch_snapshot(routeros)
     detections = fetch_detection_batch(routeros, now, common.timezone)
     with closing(open_database(common.state)) as database:
@@ -183,9 +217,17 @@ def collect(common: CommonConfig, routeros: RouterOSConfig, now: datetime) -> No
         save_state(database, state)
         save_day(database, day)
         database.commit()
+        enrichment = None
+        if asn is not None and asn.enabled:
+            enrichment = _enrich_pending_asns(database, asn, now)
         print(
             f"Collected {len(snapshot['counters'])} rules for week "
             f"{state['period']['start']} and {recorded_detections} detection events"
+            + (
+                f"; enriched {enrichment[0]} ASN records, {enrichment[1]} unresolved"
+                if enrichment is not None
+                else ""
+            )
         )
 
 

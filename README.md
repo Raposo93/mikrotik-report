@@ -56,13 +56,27 @@ list, router uptime, and the dedicated detection-event memory log. Rule, list,
 and log responses request only needed fields. The list requests return one
 minimal record per entry to determine their size.
 
+ASN enrichment for source IPs is disabled by default. Set
+`MIKROTIK_ASN_ENABLED=true` to resolve newly persisted source IPs through Team
+Cymru's community bulk WHOIS service at `whois.cymru.com:43`. The collector
+sends all pending IPs in one connection with a five-second timeout. It commits
+RouterOS counters and detection aggregates before making that optional request,
+so an unavailable or malformed ASN response cannot roll back or fail traffic
+collection. Enabling this requires outbound TCP port 43 from the collecting
+host. No ASN connection is attempted while the option is disabled.
+
 Use an absolute `MIKROTIK_REPORT_DB` path outside the checkout. The SQLite
 database contains last counter values, current/pending weekly totals, the last
 12 successfully emailed weekly aggregates, and daily aggregates for exact month
 boundaries and later historical queries. Monthly delivery status is stored in
-the same database. Daily destination-port counts, daily source-IP detection counts, and a bounded
-cursor of the RouterOS memory entries seen during the previous poll are also
-stored. Source IPs are retained only as aggregate keys; full firewall messages,
+the same database. Daily destination-port counts, daily source-IP detection
+counts, and a bounded cursor of the RouterOS memory entries seen during the
+previous poll are also stored. ASN metadata is normalized into one row per
+source IP rather than copied into historical samples. Each row records the ASN,
+organization, successful metadata update time, latest attempt time, and latest
+error. Failed or unmapped lookups retain the source IP and their attempt state
+so a later hydration or retry workflow can select them explicitly. Source IPs
+are retained only as aggregate keys; full firewall messages,
 destination addresses, interfaces, MAC addresses, and packet lengths are not
 retained. The schema uses SQLite's
 `user_version`; a writing command
@@ -392,7 +406,9 @@ not traffic metrics. A separate compact top lists up to ten destination
 `port/protocol` pairs by local detection-event count. These counts are neither
 packet volume nor unique attacks. A second top lists up to ten source IPs by
 recurring local detection-event count; it does not represent unique attacks or
-confirm that a source was malicious. Historical comparisons start becoming
+confirm that a source was malicious. When persisted ASN metadata is available,
+the source-IP top includes the ASN and organization; report generation never
+performs a network lookup. Historical comparisons start becoming
 available after the first completed week has been emailed with sufficient
 coverage. Earlier reports are not reconstructed from current router counters.
 
@@ -431,11 +447,12 @@ units. The implementation lives in the `mikrotik_reporting` package:
 * `config.py` validates command-specific environment configuration;
 * `routeros.py` reads and validates RouterOS REST responses and normalizes
   lightweight detection log entries;
+* `asn.py` performs optional bounded bulk ASN lookups for new source IPs;
 * `models.py` and `aggregation.py` define report data, calendar windows,
   counter deltas, and coverage;
 * `storage.py` owns the SQLite schema, migrations, counter aggregates, bounded
-  detection cursor, daily destination-port counts, and daily source-IP
-  detection counts;
+  detection cursor, daily destination-port counts, daily source-IP detection
+  counts, and normalized ASN metadata;
 * `rendering.py` produces report text without external side effects;
 * `workflows.py` coordinates transactions, collection, and direct invocation of
   the configured external mail transport;
@@ -470,3 +487,5 @@ RouterOS REST behavior and rule counters are documented by [MikroTik REST API](h
 and [MikroTik firewall matchers](https://manual.mikrotik.com/docs/firewall-and-quality-of-service/firewall/common-firewall-matchers-and-actions/).
 The dedicated memory buffer follows [MikroTik logging](https://manual.mikrotik.com/docs/system/logging/).
 The user group policies and address restriction are documented by [MikroTik User](https://manual.mikrotik.com/docs/authentication-authorization-accounting/user/).
+ASN lookup behavior and field semantics follow [Team Cymru IP to ASN Mapping](https://www.team-cymru.com/ip-asn-mapping/);
+the returned registry country is not used as geolocation.

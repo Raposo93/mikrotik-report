@@ -14,6 +14,8 @@ from mikrotik_reporting.storage import (
     open_database,
     open_database_existing,
     open_database_readonly,
+    pending_asn_ips,
+    record_asn_lookup,
     record_detection_batch,
     retain_sent_week,
     save_state,
@@ -281,6 +283,7 @@ class StorageTests(unittest.TestCase):
                     "detection_log_cursor",
                     "daily_detection_events",
                     "daily_source_detections",
+                    "ip_asn_metadata",
                 ):
                     self.assertIsNotNone(
                         database.execute(
@@ -327,6 +330,54 @@ class StorageTests(unittest.TestCase):
                     {"source_ip": "192.0.2.10", "detections": 7},
                     {"source_ip": "192.0.2.20", "detections": 7},
                     {"source_ip": "192.0.2.30", "detections": 2},
+                ],
+            )
+
+    def test_asn_metadata_is_stored_once_and_joined_into_rankings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.executemany(
+                    "INSERT INTO daily_source_detections "
+                    "(day, source_ip, detections) VALUES (?, ?, ?)",
+                    [
+                        ("2026-09-21", "192.0.2.10", 2),
+                        ("2026-09-22", "192.0.2.10", 3),
+                    ],
+                )
+                database.execute(
+                    "INSERT INTO ip_asn_metadata (source_ip) VALUES (?)",
+                    ("192.0.2.10",),
+                )
+                self.assertEqual(pending_asn_ips(database), ["192.0.2.10"])
+                record_asn_lookup(
+                    database,
+                    ["192.0.2.10"],
+                    {
+                        "192.0.2.10": {
+                            "asn": "64496",
+                            "organization": "Example Network",
+                        }
+                    },
+                    "2026-09-24T10:00:00+00:00",
+                )
+                sources = top_source_detections(database, "2026-09-21", "2026-09-23")
+                metadata_count = database.execute(
+                    "SELECT COUNT(*) FROM ip_asn_metadata"
+                ).fetchone()[0]
+
+            with closing(open_database_readonly(path)) as database:
+                self.assertEqual(pending_asn_ips(database), [])
+            self.assertEqual(metadata_count, 1)
+            self.assertEqual(
+                sources,
+                [
+                    {
+                        "source_ip": "192.0.2.10",
+                        "detections": 5,
+                        "asn": "64496",
+                        "asn_organization": "Example Network",
+                    }
                 ],
             )
 

@@ -171,6 +171,10 @@ def _detected_source_lines(sources: list[SourceDetection]) -> list[str]:
         return lines + ["  No detection events recorded.", ""]
     for item in sources:
         label = item["source_ip"]
+        asn = item.get("asn")
+        organization = item.get("asn_organization")
+        if asn and organization:
+            label += f" (AS{asn} {organization})"
         detections = item["detections"]
         noun = "detection" if detections == 1 else "detections"
         lines.append(f"  {label:<12} {detections:>8,} {noun}")

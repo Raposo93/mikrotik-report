@@ -47,6 +47,12 @@ class RunConfig:
     monthly_check_interval_seconds: int
 
 
+@dataclass(frozen=True)
+class ASNConfig:
+    enabled: bool
+    timeout_seconds: float = 5.0
+
+
 def _required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -77,6 +83,15 @@ def _positive_integer(name: str, default: int) -> int:
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
+
+
+def _boolean(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, str(default)).strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"{name} must be a boolean")
 
 
 def load_common_config() -> CommonConfig:
@@ -154,3 +169,7 @@ def load_run_config() -> RunConfig:
             "MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS", 86400
         ),
     )
+
+
+def load_asn_config() -> ASNConfig:
+    return ASNConfig(enabled=_boolean("MIKROTIK_ASN_ENABLED"))

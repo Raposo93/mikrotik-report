@@ -3,10 +3,26 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mikrotik_reporting.config import load_mail_config, load_run_config
+from mikrotik_reporting.config import load_asn_config, load_mail_config, load_run_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_asn_enrichment_is_disabled_by_default_and_accepts_booleans(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(load_asn_config().enabled)
+
+        for value in ("1", "true", "YES", "on"):
+            with patch.dict(os.environ, {"MIKROTIK_ASN_ENABLED": value}, clear=True):
+                self.assertTrue(load_asn_config().enabled)
+
+        with (
+            patch.dict(os.environ, {"MIKROTIK_ASN_ENABLED": "perhaps"}, clear=True),
+            self.assertRaisesRegex(
+                ValueError, "MIKROTIK_ASN_ENABLED must be a boolean"
+            ),
+        ):
+            load_asn_config()
+
     def test_run_intervals_have_explicit_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             config = load_run_config()

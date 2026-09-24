@@ -35,9 +35,19 @@ class PortDetection(TypedDict):
     detections: int
 
 
-class SourceDetection(TypedDict):
+class SourceDetectionRequired(TypedDict):
     source_ip: str
     detections: int
+
+
+class SourceDetection(SourceDetectionRequired, total=False):
+    asn: str
+    asn_organization: str
+
+
+class ASNMetadata(TypedDict):
+    asn: str
+    organization: str
 
 
 class Aggregate(TypedDict):
