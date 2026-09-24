@@ -1,0 +1,6 @@
+# Keep credentials, state, tests, and deployment files out of the build context.
+*
+!Dockerfile
+!mikrotik_report.py
+!mikrotik_reporting/
+!mikrotik_reporting/*.py

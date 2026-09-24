@@ -31,3 +31,5 @@ jobs:
           python -m ruff format --check .
       - name: Run Pyright
         run: python -m pyright
+      - name: Build and verify container image
+        run: ./verify-container.sh

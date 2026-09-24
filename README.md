@@ -159,6 +159,60 @@ cause a non-zero exit so a service manager can apply its restart policy. Do not
 run this mode alongside the timer deployment below, because both provide the
 same scheduling role.
 
+## Container image
+
+Build the standalone image from the repository root:
+
+```bash
+docker build -t mikrotik-report:local .
+```
+
+The image uses the explicit `python:3.12.14-slim-bookworm` base and runs
+`mikrotik_report.py run` directly as UID and GID `10001`. Python is therefore
+the foreground process and receives Docker's `SIGTERM` shutdown signal. The
+image contains no `.env`, credentials, SQLite state, tests, systemd units, mail
+server, or mail transport helper.
+
+Create a private environment file outside the checkout from `.env.example`.
+The variables required by `run` are:
+
+* state: `MIKROTIK_REPORT_DB`;
+* RouterOS access: `MIKROTIK_REST_URL`, `MIKROTIK_USER`, `MIKROTIK_PASSWORD`,
+  `MIKROTIK_LOCAL_RULE_COMMENT`, `MIKROTIK_LOCAL_LIST`,
+  `MIKROTIK_CROWDSEC_RULE_SIGNATURE`, and `MIKROTIK_CROWDSEC_LIST`;
+* mail delivery: `MIKROTIK_REPORT_TO` and `MIKROTIK_REPORT_NOTIFIER`.
+
+The timezone, rule table, detection-log names, report subjects, mail account and
+sender, CA bundle, and scheduling intervals are optional or have documented
+defaults in `.env.example`. Keep the database at the declared persistent path
+and point the notifier at a separately mounted compatible executable:
+
+```text
+MIKROTIK_REPORT_DB=/var/lib/mikrotik-report/report.sqlite3
+MIKROTIK_REPORT_NOTIFIER=/usr/local/bin/send-mail
+```
+
+Run the image with a named volume for the only persistent application state and
+mount the configured mail helper read-only:
+
+```bash
+docker volume create mikrotik-report-data
+docker run --rm --name mikrotik-report \
+  --env-file /absolute/path/to/mikrotik-report.env \
+  --mount type=volume,src=mikrotik-report-data,dst=/var/lib/mikrotik-report \
+  --mount type=bind,src=/absolute/path/to/send-mail,dst=/usr/local/bin/send-mail,readonly \
+  mikrotik-report:local
+```
+
+The mail helper and any files it needs must be executable/readable by UID
+`10001`; the image does not assume a specific helper implementation or SMTP
+client. A bind-mounted state directory must likewise be writable by UID/GID
+`10001`. A private RouterOS CA bundle can be mounted read-only and selected with
+`MIKROTIK_CA_FILE`. Logs remain on stdout and stderr. Stop the container with
+`docker stop` or `Ctrl-C`; the persistent mode completes any active workflow and
+then exits cleanly. Do not run the container scheduler alongside the host timer
+deployment against the same database.
+
 ## Installation with systemd timers
 
 The templates are examples; replace `/path/to/mikrotik-report` and `YOUR_USER`
@@ -365,6 +419,7 @@ normalized by `routeros.py` before it reaches aggregation or persistence.
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q mikrotik_report.py mikrotik_reporting
 ./verify-systemd-units.sh
+./verify-container.sh
 python3 -m pip install -r requirements-check.txt
 python3 -m ruff check .
 python3 -m ruff format --check .
