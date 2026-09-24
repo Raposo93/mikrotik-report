@@ -213,6 +213,30 @@ client. A bind-mounted state directory must likewise be writable by UID/GID
 then exits cleanly. Do not run the container scheduler alongside the host timer
 deployment against the same database.
 
+### Docker Compose example
+
+`compose.example.yaml` is a generic deployment example that can stay in this
+repository or be copied into a separate deployment repository. It uses the
+local `mikrotik-report:local` image built above by default. Set
+`MIKROTIK_REPORT_IMAGE` to use another tag or a separately published image.
+
+Copy `.env.example` to a private `.env` beside the Compose file and keep the
+container paths shown above for the database and notifier. Export the absolute
+host path of the compatible notifier, then start the service:
+
+```bash
+export MIKROTIK_REPORT_NOTIFIER_HOST_PATH=/absolute/path/to/send-mail
+docker compose -f compose.example.yaml up -d
+```
+
+Set `MIKROTIK_REPORT_ENV_FILE` if the private application environment file has
+another name or location. Compose creates the `report-data` named volume for
+SQLite and preserves it across container replacement. The notifier is mounted
+read-only at `/usr/local/bin/send-mail`. The example applies
+`restart: unless-stopped`, gives an active workflow up to one minute to finish
+after a stop request, and publishes no inbound ports. It contains no RouterOS,
+SMTP, monitoring, update, or database sidecars.
+
 ## Installation with systemd timers
 
 The templates are examples; replace `/path/to/mikrotik-report` and `YOUR_USER`
@@ -419,6 +443,7 @@ normalized by `routeros.py` before it reaches aggregation or persistence.
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q mikrotik_report.py mikrotik_reporting
 ./verify-systemd-units.sh
+./verify-compose.sh
 ./verify-container.sh
 python3 -m pip install -r requirements-check.txt
 python3 -m ruff check .

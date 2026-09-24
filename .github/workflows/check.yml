@@ -31,5 +31,7 @@ jobs:
           python -m ruff format --check .
       - name: Run Pyright
         run: python -m pyright
+      - name: Verify Docker Compose example
+        run: ./verify-compose.sh
       - name: Build and verify container image
         run: ./verify-container.sh
