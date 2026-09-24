@@ -32,14 +32,13 @@ collector never enables per-packet drop logging.
   `not allowed (9)`. Restrict the account to the collecting host with its
   `address` setting (for example `192.0.2.10/32`; replace it with the
   actual collector address).
-* An external mail transport helper configured with the absolute
-  `MIKROTIK_REPORT_NOTIFIER` path. The helper may live anywhere on the
-  collecting host and is responsible for its own transport configuration.
+* A mail transport helper configured with the absolute
+  `MIKROTIK_REPORT_NOTIFIER` path. The container image includes a Python SMTP
+  notifier; host installations may use it or another compatible helper.
 
 Copy `.env.example` to a private `.env` and adapt every required value.
-`MIKROTIK_REPORT_NOTIFIER` must be an absolute path; keeping the mail helper
-outside this project does not require any particular repository layout. The
-example selects the local `raw` rule by exact comment and source address list.
+`MIKROTIK_REPORT_NOTIFIER` must be an absolute path. The example selects the
+local `raw` rule by exact comment and source address list.
 Change `MIKROTIK_LOCAL_RULE_TABLE` to `filter` if the local drop rule is there.
 The bouncer selector matches the configured signature within a rule comment,
 the configured source address list, and `action=drop` in both IPv4 `raw` and
@@ -225,8 +224,9 @@ docker build -t mikrotik-report:local .
 The image uses the explicit `python:3.12.14-slim-bookworm` base and runs
 `mikrotik_report.py run` directly as UID and GID `10001`. Python is therefore
 the foreground process and receives Docker's `SIGTERM` shutdown signal. The
-image contains no `.env`, credentials, SQLite state, tests, systemd units, mail
-server, or mail transport helper.
+image contains no `.env`, credentials, SQLite state, tests, systemd units, or
+mail server. It does contain the standard-library Python SMTP notifier at
+`/usr/local/bin/send-mail`.
 
 Create a private environment file outside the checkout from `.env.example`.
 The variables required by `run` are:
@@ -235,39 +235,48 @@ The variables required by `run` are:
 * RouterOS access: `MIKROTIK_REST_URL`, `MIKROTIK_USER`, `MIKROTIK_PASSWORD`,
   `MIKROTIK_LOCAL_RULE_COMMENT`, `MIKROTIK_LOCAL_LIST`,
   `MIKROTIK_CROWDSEC_RULE_SIGNATURE`, and `MIKROTIK_CROWDSEC_LIST`;
-* mail delivery: `MIKROTIK_REPORT_TO` and `MIKROTIK_REPORT_NOTIFIER`.
+* mail delivery: `MIKROTIK_REPORT_TO`, `MIKROTIK_SMTP_HOST`, and, when the
+  server requires authentication, `MIKROTIK_SMTP_USER` plus either
+  `MIKROTIK_SMTP_PASSWORD` or `MIKROTIK_SMTP_PASSWORD_FILE`.
 
 The timezone, rule table, detection-log names, ASN enrichment policy, report
-subjects, mail account and sender, CA bundle, and scheduling intervals are
-optional or have documented defaults in `.env.example`. Keep the database at
-the declared persistent path and point the notifier at a separately mounted
-compatible executable:
+subjects, sender, SMTP TLS mode, ports, CA bundles, timeouts, and scheduling
+intervals are optional or have documented defaults in `.env.example`. Keep the
+database at the declared persistent path. The image already sets the notifier
+path, though it can still be overridden with another compatible executable:
 
 ```text
 MIKROTIK_REPORT_DB=/var/lib/mikrotik-report/report.sqlite3
 MIKROTIK_REPORT_NOTIFIER=/usr/local/bin/send-mail
 ```
 
-Run the image with a named volume for the only persistent application state and
-mount the configured mail helper read-only:
+Run the image with a named volume for the only persistent application state:
 
 ```bash
 docker volume create mikrotik-report-data
 docker run --rm --name mikrotik-report \
   --env-file /absolute/path/to/mikrotik-report.env \
   --mount type=volume,src=mikrotik-report-data,dst=/var/lib/mikrotik-report \
-  --mount type=bind,src=/absolute/path/to/send-mail,dst=/usr/local/bin/send-mail,readonly \
   ghcr.io/raposo93/mikrotik-report:latest
 ```
 
-The mail helper and any files it needs must be executable/readable by UID
-`10001`; the image does not assume a specific helper implementation or SMTP
-client. A bind-mounted state directory must likewise be writable by UID/GID
-`10001`. A private RouterOS CA bundle can be mounted read-only and selected with
-`MIKROTIK_CA_FILE`. Logs remain on stdout and stderr. Stop the container with
-`docker stop` or `Ctrl-C`; the persistent mode completes any active workflow and
-then exits cleanly. Do not run the container scheduler alongside the host timer
-deployment against the same database.
+The embedded notifier sends plain-text UTF-8 mail using Python's standard
+library. `MIKROTIK_SMTP_TLS=starttls` uses port `587` by default;
+`MIKROTIK_SMTP_TLS=implicit` uses port `465`. TLS certificate verification is
+always enabled. Authentication is optional, but user and password must be
+configured together. For a file-backed password, mount the file read-only,
+make it readable by UID `10001`, and set `MIKROTIK_SMTP_PASSWORD_FILE`; do not
+also set `MIKROTIK_SMTP_PASSWORD`. The sender comes from `MIKROTIK_REPORT_FROM`
+and otherwise falls back to `MIKROTIK_SMTP_USER`. `MIKROTIK_REPORT_MAIL_ACCOUNT`
+is accepted for compatibility with external notifiers but does not select a
+second embedded SMTP account.
+
+A bind-mounted state directory must be writable by UID/GID `10001`. Private
+RouterOS or SMTP CA bundles can be mounted read-only and selected with
+`MIKROTIK_CA_FILE` or `MIKROTIK_SMTP_CA_FILE`. Logs remain on stdout and stderr.
+Stop the container with `docker stop` or `Ctrl-C`; the persistent mode completes
+any active workflow and then exits cleanly. Do not run the container scheduler
+alongside the host timer deployment against the same database.
 
 ### Docker Compose example
 
@@ -276,22 +285,19 @@ repository or be copied into a separate deployment repository. It uses the
 published `ghcr.io/raposo93/mikrotik-report:latest` image by default. Set
 `MIKROTIK_REPORT_IMAGE` to pin a version or use a locally built image.
 
-Copy `.env.example` to a private `.env` beside the Compose file and keep the
-container paths shown above for the database and notifier. Export the absolute
-host path of the compatible notifier, then start the service:
+Copy `.env.example` to a private `.env` beside the Compose file, configure SMTP,
+and keep the container database path shown above. Then start the service:
 
 ```bash
-export MIKROTIK_REPORT_NOTIFIER_HOST_PATH=/absolute/path/to/send-mail
 docker compose -f compose.example.yaml up -d
 ```
 
 Set `MIKROTIK_REPORT_ENV_FILE` if the private application environment file has
 another name or location. Compose creates the `report-data` named volume for
-SQLite and preserves it across container replacement. The notifier is mounted
-read-only at `/usr/local/bin/send-mail`. The example applies
+SQLite and preserves it across container replacement. The example applies
 `restart: unless-stopped`, gives an active workflow up to one minute to finish
-after a stop request, and publishes no inbound ports. It contains no RouterOS,
-SMTP, monitoring, update, or database sidecars.
+after a stop request, and publishes no inbound ports. It needs no SMTP,
+RouterOS, monitoring, update, or database sidecars.
 
 ## Installation with systemd timers
 
@@ -492,7 +498,8 @@ units. The implementation lives in the `mikrotik_reporting` package:
   counts, normalized ASN metadata, and ASN detection summaries;
 * `rendering.py` produces report text without external side effects;
 * `workflows.py` coordinates transactions, collection, and direct invocation of
-  the configured external mail transport;
+  the configured mail transport;
+* `send_mail.py` is the image's plain-text SMTP notifier;
 * `scheduler.py` runs those workflows sequentially on explicit intervals and
   handles foreground-process termination;
 * `cli.py` maps the six commands (`collect`, `report`, `report-monthly`,
@@ -506,7 +513,7 @@ normalized by `routeros.py` before it reaches aggregation or persistence.
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m compileall -q mikrotik_report.py mikrotik_reporting
+python3 -m compileall -q mikrotik_report.py mikrotik_reporting send_mail.py
 ./verify-systemd-units.sh
 ./verify-compose.sh
 ./verify-container.sh

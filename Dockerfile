@@ -1,7 +1,8 @@
 FROM python:3.12.14-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    MIKROTIK_REPORT_NOTIFIER=/usr/local/bin/send-mail
 
 RUN groupadd --gid 10001 mikrotik-report \
     && useradd --uid 10001 --gid mikrotik-report --no-create-home --no-log-init \
@@ -13,6 +14,7 @@ WORKDIR /app
 
 COPY mikrotik_report.py ./
 COPY mikrotik_reporting ./mikrotik_reporting
+COPY --chmod=0555 send_mail.py /usr/local/bin/send-mail
 
 USER 10001:10001
 

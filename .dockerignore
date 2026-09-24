@@ -2,5 +2,6 @@
 *
 !Dockerfile
 !mikrotik_report.py
+!send_mail.py
 !mikrotik_reporting/
 !mikrotik_reporting/*.py

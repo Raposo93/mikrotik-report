@@ -6,6 +6,7 @@ image_name=${1:-mikrotik-report:test}
 
 docker build --pull --tag "$image_name" .
 docker run --rm "$image_name" --help >/dev/null
+docker run --rm --entrypoint /usr/local/bin/send-mail "$image_name" --help >/dev/null
 
 user_id=$(docker run --rm --entrypoint id "$image_name" -u)
 if [ "$user_id" != "10001" ]; then
