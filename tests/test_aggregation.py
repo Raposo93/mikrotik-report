@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from helpers import UTC, at, sample
+
 from mikrotik_reporting.aggregation import (
     apply_snapshot,
     expected_samples,

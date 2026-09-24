@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from helpers import UTC, router
+
 from mikrotik_reporting.config import load_common_config, load_routeros_config
 from mikrotik_reporting.routeros import (
     fetch_detection_batch,

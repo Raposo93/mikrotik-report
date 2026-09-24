@@ -1,6 +1,7 @@
 import unittest
 
 from helpers import UTC
+
 from mikrotik_reporting.models import empty_period
 from mikrotik_reporting.rendering import render_monthly_report, render_weekly_report
 

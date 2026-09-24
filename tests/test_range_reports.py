@@ -11,6 +11,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from helpers import common
+
 from mikrotik_reporting.aggregation import expected_samples, range_window
 from mikrotik_reporting.cli import _date_argument, main
 from mikrotik_reporting.models import empty_period

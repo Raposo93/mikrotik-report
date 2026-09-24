@@ -8,6 +8,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from helpers import UTC, at, common, mail, router, sample
+
 from mikrotik_reporting.aggregation import apply_snapshot
 from mikrotik_reporting.models import (
     DetectionBatch,

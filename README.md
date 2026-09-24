@@ -13,8 +13,9 @@ discarded under CrowdSec decisions; CrowdSec detects and classifies those
 attacks. Counts are packets and bytes, not unique IPs or attacks. The collector
 also records one lightweight event when the local detection rule first adds a
 source to the configured list. Destination-port rankings count those detection
-events, not packets or unique attacks. The collector never enables per-packet
-drop logging.
+events, while recurring-source rankings group the same events by source IP.
+Neither ranking measures packets, unique sources, or confirmed attacks. The
+collector never enables per-packet drop logging.
 
 ## Requirements and configuration
 
@@ -27,11 +28,9 @@ drop logging.
   `not allowed (9)`. Restrict the account to the collecting host with its
   `address` setting (for example `192.0.2.10/32`; replace it with the
   actual collector address).
-* An external `send-mail.sh` transport helper configured with the absolute
-  `MIKROTIK_REPORT_NOTIFIER` path, plus its configured `msmtp` account on the
-  collecting host. The helper may live in another checkout. The current
-  `self-hosted` mail notifier remains compatible; grant both report services
-  access to its SMTP password through the dedicated `mail-notifier` group.
+* An external mail transport helper configured with the absolute
+  `MIKROTIK_REPORT_NOTIFIER` path. The helper may live anywhere on the
+  collecting host and is responsible for its own transport configuration.
 
 Copy `.env.example` to a private `.env` and adapt every required value.
 `MIKROTIK_REPORT_NOTIFIER` must be an absolute path; keeping the mail helper
@@ -119,30 +118,32 @@ only a local time.
 
 The first successful collector run establishes a conservative cursor over the
 existing buffer and does not claim those older entries. Later polls store only
-new matching TCP/UDP events as daily `protocol/destination-port` counts. The
-cursor contains hashes for at most the entries in the current memory buffer; it
-does not grow with report history. A router reboot or buffer overflow before a
-poll can lose detection events, and those events cannot be reconstructed from
-firewall counters. An empty ranking therefore means no events were persisted,
-not proof that no detections occurred.
+new matching TCP/UDP events as daily `protocol/destination-port` counts and
+daily source-IP detection counts. The cursor contains hashes for at most the
+entries in the current memory buffer; it does not grow with report history. A
+router reboot or buffer overflow before a poll can lose detection events, and
+those events cannot be reconstructed from firewall counters. An empty ranking
+therefore means no events were persisted, not proof that no detections occurred.
 
 ## Installation
 
-The templates are examples; replace `/path/to/self-hosted` and `YOUR_USER` in
-all three services. Choose a user that can read `.env` and write the state
+The templates are examples; replace `/path/to/mikrotik-report` and `YOUR_USER`
+in all three services. Choose a user that can read `.env` and write the state
 directory.
 The collector's `StateDirectory=mikrotik-report` creates
-`/var/lib/mikrotik-report` for `MIKROTIK_REPORT_DB`. Configure SMTP password
-access before enabling the report timers. The weekly and monthly services run
-as the same unprivileged user with `mail-notifier` added only to their processes.
-They have no `StateDirectory` so systemd does not change ownership of the
-collector's directory. Set the timezone in `.env` to the intended reporting
-timezone, for example `Etc/UTC`.
+`/var/lib/mikrotik-report` for `MIKROTIK_REPORT_DB`. Configure the mail helper
+and its credential access before enabling the report timers. The weekly and
+monthly services run as the same unprivileged user. If the chosen mail helper
+requires an additional group or another local permission, add it with a
+site-specific systemd drop-in rather than editing the portable templates. The
+report services have no `StateDirectory` so systemd does not change ownership
+of the collector's directory. Set the timezone in `.env` to the intended
+reporting timezone, for example `Etc/UTC`.
 If a report timer runs before the first collection, it exits without creating
 the database; the collector creates it under its own user.
 
 ```bash
-cd /path/to/self-hosted/mikrotik-report
+cd /path/to/mikrotik-report
 cp .env.example .env
 chmod 600 .env
 # Edit .env and all service templates for this host.
@@ -156,9 +157,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now mikrotik-report-collect.timer mikrotik-report-weekly.timer mikrotik-report-monthly.timer
 ```
 
-For an existing installation where the weekly unit runs as `root`, first grant
-the weekly service SMTP password access through the group described above. Then update the installed weekly unit to
-match the template while preserving its local user and paths, and run
+For an existing installation where a report unit runs as `root`, update the
+installed unit to match the template while preserving its local user, paths,
+and any helper-specific permissions in a local drop-in, then run
 `sudo systemctl daemon-reload`. The collector unit and database ownership stay
 with the collector user.
 
@@ -181,32 +182,31 @@ sudo journalctl -u mikrotik-report-collect.service -u mikrotik-report-weekly.ser
 ```
 
 To test the complete path before the week closes, run a transient service with
-the same user, group, and environment as the weekly service. Do this after at
+the same user and environment as the weekly service. Do this after at
 least one successful collection:
 
 ```bash
 sudo systemd-run --wait --collect --pipe \
   -p User=YOUR_USER \
   -p Group=YOUR_USER \
-  -p SupplementaryGroups=mail-notifier \
-  -p WorkingDirectory=/path/to/self-hosted/mikrotik-report \
-  -p EnvironmentFile=/path/to/self-hosted/mikrotik-report/.env \
-  /usr/bin/python3 /path/to/self-hosted/mikrotik-report/mikrotik_report.py test-report
+  -p WorkingDirectory=/path/to/mikrotik-report \
+  -p EnvironmentFile=/path/to/mikrotik-report/.env \
+  /usr/bin/python3 /path/to/mikrotik-report/mikrotik_report.py test-report
 ```
 
 `test-report` fetches a live RouterOS sample, reads the SQLite database in
 read-only mode, calculates a preview of the current incomplete week in memory,
-and sends it through `mail-notifier` to `MIKROTIK_REPORT_TO` with a `[TEST]`
-subject and a clear test banner. It does not update counters, close a week, or
-remove pending reports. Success prints `Sent test report`; a RouterOS or mail
-failure exits nonzero. The preview may include the latest observed counter
-delta, which the next scheduled collection will still record normally.
+and sends it through the configured mail helper to `MIKROTIK_REPORT_TO` with a
+`[TEST]` subject and a clear test banner. It does not update counters, close a
+week, or remove pending reports. Success prints `Sent test report`; a RouterOS
+or mail failure exits nonzero. The preview may include the latest observed
+counter delta, which the next scheduled collection will still record normally.
 
 To inspect an arbitrary historical interval, run `range` as a user that can read
 the configured database:
 
 ```bash
-cd /path/to/self-hosted/mikrotik-report
+cd /path/to/mikrotik-report
 MIKROTIK_REPORT_DB=/var/lib/mikrotik-report/report.sqlite3 \
 MIKROTIK_REPORT_TIMEZONE=Etc/UTC \
   python3 mikrotik_report.py range --from 2026-09-16 --to 2026-10-03
@@ -223,12 +223,13 @@ environment.
 Range totals include samples persisted inside the requested dates, including
 ranges that cross weekly or monthly boundaries. Address-list maxima cover all
 sampled days and the latest size comes from the last sampled day. The detected
-destination-port top uses the same exact date boundaries. The quality
-block compares observed samples with the nominal five-minute cadence over the
-exact interval. Partial coverage is marked explicitly and totals then describe
-only observed samples; a range with no persisted samples reports activity as
-unavailable rather than zero. Data from before daily aggregate collection was
-introduced cannot be reconstructed from current RouterOS counters.
+destination-port and recurring-source tops use the same exact date boundaries.
+The quality block compares observed samples with the nominal five-minute cadence
+over the exact interval. Partial coverage is marked explicitly and totals then
+describe only observed samples; a range with no persisted samples reports
+activity as unavailable rather than zero. Data from before daily aggregate
+collection was introduced cannot be reconstructed from current RouterOS
+counters.
 
 The first collection establishes a baseline; it does not claim traffic that
 occurred before installation. Each later sample adds the difference from the
@@ -266,22 +267,24 @@ coverage is shown as unavailable rather than as zero. The trend applies the same
 rule. Router reboot, counter reset, and rule rebaseline counts are informational,
 not traffic metrics. A separate compact top lists up to ten destination
 `port/protocol` pairs by local detection-event count. These counts are neither
-packet volume nor unique attacks. Historical comparisons start becoming
+packet volume nor unique attacks. A second top lists up to ten source IPs by
+recurring local detection-event count; it does not represent unique attacks or
+confirm that a source was malicious. Historical comparisons start becoming
 available after the first completed week has been emailed with sufficient
 coverage. Earlier reports are not reconstructed from current router counters.
 
 The monthly email shows local and CrowdSec packet and byte totals, latest and
 maximum observed address-list sizes, and the same data-quality fields as the
 weekly email. It also aggregates the destination-port top over the exact
-calendar month. Month-over-month comparisons use the same current, previous,
-absolute change, percentage, and direction rules. Both months need at least
-90% estimated sample coverage; a missing or low-coverage previous month is
-shown as unavailable. An entirely unsampled month has unavailable activity
-values, not zero traffic. The first month after upgrading may have low coverage
-because earlier collections did not create daily aggregates. The monthly command
-queues each completed month since the first daily aggregate, including months
-with no samples, and records successful delivery so a later daily timer run does
-not resend it.
+calendar month and includes the recurring-source top for the same boundaries.
+Month-over-month comparisons use the same current, previous, absolute change,
+percentage, and direction rules. Both months need at least 90% estimated sample
+coverage; a missing or low-coverage previous month is shown as unavailable. An
+entirely unsampled month has unavailable activity values, not zero traffic. The
+first month after upgrading may have low coverage because earlier collections
+did not create daily aggregates. The monthly command queues each completed
+month since the first daily aggregate, including months with no samples, and
+records successful delivery so a later daily timer run does not resend it.
 
 SQLite transactions serialize collection and reporting, and state survives
 host restarts. A completed week or month stays pending if email delivery fails;
@@ -308,11 +311,13 @@ units. The implementation lives in the `mikrotik_reporting` package:
 * `models.py` and `aggregation.py` define report data, calendar windows,
   counter deltas, and coverage;
 * `storage.py` owns the SQLite schema, migrations, counter aggregates, bounded
-  detection cursor, and daily destination-port counts;
+  detection cursor, daily destination-port counts, and daily source-IP
+  detection counts;
 * `rendering.py` produces report text without external side effects;
 * `workflows.py` coordinates transactions, collection, and direct invocation of
   the configured external mail transport;
-* `cli.py` maps the four existing commands to those workflows.
+* `cli.py` maps the five commands (`collect`, `report`, `report-monthly`,
+  `test-report`, and `range`) to those workflows.
 
 Keep business decisions out of the CLI and SQLite helpers. New report formats
 should consume aggregates through `rendering.py`; new collection data should be
@@ -323,6 +328,10 @@ normalized by `routeros.py` before it reaches aggregation or persistence.
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q mikrotik_report.py mikrotik_reporting
+python3 -m pip install -r requirements-check.txt
+python3 -m ruff check .
+python3 -m ruff format --check .
+python3 -m pyright
 ```
 
 The tests use synthetic RouterOS responses and temporary SQLite files. They
