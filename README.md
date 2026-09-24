@@ -161,7 +161,18 @@ same scheduling role.
 
 ## Container image
 
-Build the standalone image from the repository root:
+Release images are published to GitHub Container Registry. Pull the current
+stable release with:
+
+```bash
+docker pull ghcr.io/raposo93/mikrotik-report:latest
+```
+
+Each GitHub release also publishes full-version and moving major/minor tags,
+for example `1.2.3` and `1.2`. Prereleases receive version tags but do not
+replace `latest`.
+
+To build the standalone image locally from the repository root instead:
 
 ```bash
 docker build -t mikrotik-report:local .
@@ -201,7 +212,7 @@ docker run --rm --name mikrotik-report \
   --env-file /absolute/path/to/mikrotik-report.env \
   --mount type=volume,src=mikrotik-report-data,dst=/var/lib/mikrotik-report \
   --mount type=bind,src=/absolute/path/to/send-mail,dst=/usr/local/bin/send-mail,readonly \
-  mikrotik-report:local
+  ghcr.io/raposo93/mikrotik-report:latest
 ```
 
 The mail helper and any files it needs must be executable/readable by UID
@@ -217,8 +228,8 @@ deployment against the same database.
 
 `compose.example.yaml` is a generic deployment example that can stay in this
 repository or be copied into a separate deployment repository. It uses the
-local `mikrotik-report:local` image built above by default. Set
-`MIKROTIK_REPORT_IMAGE` to use another tag or a separately published image.
+published `ghcr.io/raposo93/mikrotik-report:latest` image by default. Set
+`MIKROTIK_REPORT_IMAGE` to pin a version or use a locally built image.
 
 Copy `.env.example` to a private `.env` beside the Compose file and keep the
 container paths shown above for the database and notifier. Export the absolute
