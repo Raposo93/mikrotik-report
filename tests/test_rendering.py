@@ -132,6 +132,58 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("Top recurring source IPs", rendered)
         self.assertIn("No detection events recorded.", rendered)
 
+    def test_asn_summary_shows_grouped_activity_share_and_coverage(self) -> None:
+        rendered = render_weekly_report(
+            empty_period("2026-09-21"),
+            UTC,
+            completed=False,
+            asn_summary={
+                "items": [
+                    {
+                        "asn": "64496",
+                        "organization": "Example Network",
+                        "detections": 10,
+                        "source_ips": 2,
+                    },
+                    {
+                        "asn": "64497",
+                        "organization": "Other Network",
+                        "detections": 3,
+                        "source_ips": 1,
+                    },
+                ],
+                "total_detections": 20,
+                "resolved_detections": 13,
+                "total_source_ips": 4,
+                "resolved_source_ips": 3,
+            },
+        )
+
+        self.assertIn("Top source ASNs", rendered)
+        self.assertIn("AS64496 Example Network", rendered)
+        self.assertIn("10 detections; 2 source IPs; 50.0%", rendered)
+        self.assertIn("13 / 20 detections (65.0%)", rendered)
+        self.assertIn("3 / 4 source IPs (75.0%)", rendered)
+        self.assertIn("not firewall packet or byte counters", rendered)
+
+    def test_asn_summary_is_sensible_when_metadata_is_unavailable(self) -> None:
+        rendered = render_weekly_report(
+            empty_period("2026-09-21"),
+            UTC,
+            completed=False,
+            top_sources=[{"source_ip": "192.0.2.10", "detections": 5}],
+            asn_summary={
+                "items": [],
+                "total_detections": 5,
+                "resolved_detections": 0,
+                "total_source_ips": 1,
+                "resolved_source_ips": 0,
+            },
+        )
+
+        self.assertIn("192.0.2.10", rendered)
+        self.assertIn("No ASN metadata available", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

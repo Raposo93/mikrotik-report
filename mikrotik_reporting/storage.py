@@ -13,7 +13,9 @@ from .aggregation import next_month
 from .models import (
     METRICS,
     SOURCES,
+    ASNDetection,
     ASNMetadata,
+    ASNSummary,
     DetectionBatch,
     Period,
     PortDetection,
@@ -420,6 +422,82 @@ def top_source_detections(
             item["asn_organization"] = row["organization"]
         results.append(item)
     return results
+
+
+def asn_detection_summary(
+    database: sqlite3.Connection,
+    start: str,
+    end: str,
+    limit: int = 10,
+) -> ASNSummary:
+    if limit <= 0:
+        raise ValueError("ASN detection limit must be positive")
+    empty: ASNSummary = {
+        "items": [],
+        "total_detections": 0,
+        "resolved_detections": 0,
+        "total_source_ips": 0,
+        "resolved_source_ips": 0,
+    }
+    if not database.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'daily_source_detections'"
+    ).fetchone():
+        return empty
+    totals = database.execute(
+        "SELECT COALESCE(SUM(detections), 0) AS detections, "
+        "COUNT(DISTINCT source_ip) AS source_ips "
+        "FROM daily_source_detections WHERE day >= ? AND day < ?",
+        (start, end),
+    ).fetchone()
+    summary: ASNSummary = {
+        **empty,
+        "total_detections": totals["detections"],
+        "total_source_ips": totals["source_ips"],
+    }
+    if not database.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ip_asn_metadata'"
+    ).fetchone():
+        return summary
+    resolved = database.execute(
+        "SELECT COALESCE(SUM(detections.detections), 0) AS detections, "
+        "COUNT(DISTINCT detections.source_ip) AS source_ips "
+        "FROM daily_source_detections AS detections "
+        "JOIN ip_asn_metadata AS metadata "
+        "ON metadata.source_ip = detections.source_ip "
+        "WHERE detections.day >= ? AND detections.day < ? "
+        "AND metadata.asn IS NOT NULL",
+        (start, end),
+    ).fetchone()
+    rows = database.execute(
+        "SELECT metadata.asn, MIN(metadata.organization) AS organization, "
+        "SUM(detections.detections) AS detections, "
+        "COUNT(DISTINCT detections.source_ip) AS source_ips "
+        "FROM daily_source_detections AS detections "
+        "JOIN ip_asn_metadata AS metadata "
+        "ON metadata.source_ip = detections.source_ip "
+        "WHERE detections.day >= ? AND detections.day < ? "
+        "AND metadata.asn IS NOT NULL "
+        "GROUP BY metadata.asn "
+        "ORDER BY SUM(detections.detections) DESC, "
+        "COUNT(DISTINCT detections.source_ip) DESC, metadata.asn LIMIT ?",
+        (start, end, limit),
+    ).fetchall()
+    items: list[ASNDetection] = [
+        {
+            "asn": row["asn"],
+            "organization": row["organization"],
+            "detections": row["detections"],
+            "source_ips": row["source_ips"],
+        }
+        for row in rows
+    ]
+    summary.update(
+        items=items,
+        resolved_detections=resolved["detections"],
+        resolved_source_ips=resolved["source_ips"],
+    )
+    return summary
 
 
 def pending_asn_ips(

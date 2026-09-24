@@ -419,7 +419,13 @@ packet volume nor unique attacks. A second top lists up to ten source IPs by
 recurring local detection-event count; it does not represent unique attacks or
 confirm that a source was malicious. When persisted ASN metadata is available,
 the source-IP top includes the ASN and organization; report generation never
-performs a network lookup. Historical comparisons start becoming
+performs a network lookup. A separate ASN top groups those detection events by
+persisted ASN and shows detection count, distinct source-IP count, share of all
+source-detection events, and resolved-metadata coverage. Unresolved IPs remain
+in the source-IP top and in the ASN share denominator. ASN shares do not
+represent firewall packet or byte shares. With enrichment disabled, reports
+remain available and state explicitly when recorded IPs have no ASN metadata.
+Historical comparisons start becoming
 available after the first completed week has been emailed with sufficient
 coverage. Earlier reports are not reconstructed from current router counters.
 
@@ -463,7 +469,7 @@ units. The implementation lives in the `mikrotik_reporting` package:
   counter deltas, and coverage;
 * `storage.py` owns the SQLite schema, migrations, counter aggregates, bounded
   detection cursor, daily destination-port counts, daily source-IP detection
-  counts, and normalized ASN metadata;
+  counts, normalized ASN metadata, and ASN detection summaries;
 * `rendering.py` produces report text without external side effects;
 * `workflows.py` coordinates transactions, collection, and direct invocation of
   the configured external mail transport;

@@ -50,6 +50,21 @@ class ASNMetadata(TypedDict):
     organization: str
 
 
+class ASNDetection(TypedDict):
+    asn: str
+    organization: str
+    detections: int
+    source_ips: int
+
+
+class ASNSummary(TypedDict):
+    items: list[ASNDetection]
+    total_detections: int
+    resolved_detections: int
+    total_source_ips: int
+    resolved_source_ips: int
+
+
 class Aggregate(TypedDict):
     totals: dict[str, dict[str, int]]
     max_sizes: dict[str, int]

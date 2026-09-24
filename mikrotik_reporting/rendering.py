@@ -14,6 +14,7 @@ from .aggregation import (
 )
 from .models import (
     METRICS,
+    ASNSummary,
     Period,
     PeriodKind,
     PeriodWindow,
@@ -182,6 +183,46 @@ def _detected_source_lines(sources: list[SourceDetection]) -> list[str]:
     return lines
 
 
+def _asn_summary_lines(summary: ASNSummary) -> list[str]:
+    lines = ["Top source ASNs"]
+    total_detections = summary["total_detections"]
+    if total_detections == 0:
+        return lines + ["  No detection events recorded.", ""]
+    if not summary["items"]:
+        return lines + ["  No ASN metadata available for recorded source IPs.", ""]
+    for item in summary["items"]:
+        detection_noun = "detection" if item["detections"] == 1 else "detections"
+        ip_noun = "source IP" if item["source_ips"] == 1 else "source IPs"
+        share = item["detections"] / total_detections
+        detail = (
+            f"    {item['detections']:,} {detection_noun}; "
+            f"{item['source_ips']:,} {ip_noun}; "
+            f"{share:.1%} of source detections"
+        )
+        lines.extend(
+            (
+                f"  AS{item['asn']} {item['organization']}",
+                detail,
+            )
+        )
+    detection_coverage = summary["resolved_detections"] / total_detections
+    ip_coverage = summary["resolved_source_ips"] / summary["total_source_ips"]
+    lines.extend(
+        (
+            (
+                "  ASN coverage: "
+                f"{summary['resolved_detections']:,} / {total_detections:,} "
+                f"detections ({detection_coverage:.1%}); "
+                f"{summary['resolved_source_ips']:,} / "
+                f"{summary['total_source_ips']:,} source IPs ({ip_coverage:.1%})"
+            ),
+            "  Shares use detection events, not firewall packet or byte counters.",
+            "",
+        )
+    )
+    return lines
+
+
 def _report_footer(period: Period, *, comparisons: bool = True) -> list[str]:
     lines = [
         (
@@ -219,6 +260,7 @@ def render_weekly_report(
     completed: bool = True,
     top_ports: list[PortDetection] | None = None,
     top_sources: list[SourceDetection] | None = None,
+    asn_summary: ASNSummary | None = None,
 ) -> str:
     window = week_window(period["start"])
     lines = [
@@ -230,6 +272,7 @@ def render_weekly_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(_asn_summary_lines(asn_summary) if asn_summary is not None else []),
     ]
     if completed:
         previous_start = (
@@ -252,6 +295,7 @@ def render_monthly_report(
     timezone_: ZoneInfo,
     top_ports: list[PortDetection] | None = None,
     top_sources: list[SourceDetection] | None = None,
+    asn_summary: ASNSummary | None = None,
 ) -> str:
     window = month_window(period["start"])
     lines = [
@@ -263,6 +307,7 @@ def render_monthly_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(_asn_summary_lines(asn_summary) if asn_summary is not None else []),
         *_comparison_lines(period, previous, timezone_, window),
         "",
         *_report_footer(period),
@@ -276,6 +321,7 @@ def render_range_report(
     timezone_: ZoneInfo,
     top_ports: list[PortDetection] | None = None,
     top_sources: list[SourceDetection] | None = None,
+    asn_summary: ASNSummary | None = None,
 ) -> str:
     if window.kind != "range":
         raise ValueError("Range report requires an explicit range window")
@@ -288,6 +334,7 @@ def render_range_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(_asn_summary_lines(asn_summary) if asn_summary is not None else []),
     ]
     if not comparable(period, window, timezone_):
         lines.extend(

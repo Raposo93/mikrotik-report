@@ -9,6 +9,7 @@ from mikrotik_reporting.models import DetectionBatch, empty_period, initial_stat
 from mikrotik_reporting.storage import (
     HISTORY_WEEKS,
     SCHEMA_VERSION,
+    asn_detection_summary,
     load_history,
     load_state,
     open_database,
@@ -500,6 +501,82 @@ class StorageTests(unittest.TestCase):
 
             self.assertEqual(first, ["192.0.2.1", "192.0.2.2"])
             self.assertEqual(second, ["192.0.2.3", "192.0.2.4"])
+
+    def test_asn_detection_summary_groups_ips_and_keeps_full_denominator(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.executemany(
+                    "INSERT INTO daily_source_detections "
+                    "(day, source_ip, detections) VALUES (?, ?, ?)",
+                    [
+                        ("2026-09-20", "192.0.2.1", 4),
+                        ("2026-09-21", "192.0.2.1", 2),
+                        ("2026-09-21", "192.0.2.2", 4),
+                        ("2026-09-21", "192.0.2.3", 3),
+                        ("2026-09-21", "192.0.2.4", 7),
+                        ("2026-09-22", "192.0.2.5", 100),
+                    ],
+                )
+                database.executemany(
+                    "INSERT INTO ip_asn_metadata "
+                    "(source_ip, asn, organization, updated_at) VALUES (?, ?, ?, ?)",
+                    [
+                        (
+                            "192.0.2.1",
+                            "64496",
+                            "Example Network",
+                            "2026-09-24T00:00:00+00:00",
+                        ),
+                        (
+                            "192.0.2.2",
+                            "64496",
+                            "Example Network",
+                            "2026-09-24T00:00:00+00:00",
+                        ),
+                        (
+                            "192.0.2.3",
+                            "64497",
+                            "Other Network",
+                            "2026-09-24T00:00:00+00:00",
+                        ),
+                    ],
+                )
+                summary = asn_detection_summary(
+                    database, "2026-09-20", "2026-09-22", limit=1
+                )
+
+            self.assertEqual(summary["total_detections"], 20)
+            self.assertEqual(summary["resolved_detections"], 13)
+            self.assertEqual(summary["total_source_ips"], 4)
+            self.assertEqual(summary["resolved_source_ips"], 3)
+            self.assertEqual(
+                summary["items"],
+                [
+                    {
+                        "asn": "64496",
+                        "organization": "Example Network",
+                        "detections": 10,
+                        "source_ips": 2,
+                    }
+                ],
+            )
+
+    def test_asn_detection_summary_keeps_unresolved_activity_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.execute(
+                    "INSERT INTO daily_source_detections "
+                    "(day, source_ip, detections) VALUES (?, ?, ?)",
+                    ("2026-09-21", "192.0.2.10", 5),
+                )
+                summary = asn_detection_summary(database, "2026-09-21", "2026-09-22")
+
+            self.assertEqual(summary["total_detections"], 5)
+            self.assertEqual(summary["total_source_ips"], 1)
+            self.assertEqual(summary["resolved_detections"], 0)
+            self.assertEqual(summary["items"], [])
 
     def test_schema_four_failure_is_migrated_to_due_retry_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

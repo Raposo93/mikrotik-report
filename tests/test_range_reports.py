@@ -145,11 +145,14 @@ class RangeReportTests(unittest.TestCase):
                 ),
                 redirect_stdout(StringIO()) as output,
                 redirect_stderr(StringIO()),
+                patch("mikrotik_reporting.workflows.lookup_asns") as lookup,
             ):
                 main()
+            lookup.assert_not_called()
             self.assertIn("2026-09-16 to 2026-09-17", output.getvalue())
             self.assertIn("192.0.2.40", output.getvalue())
             self.assertIn("22/tcp", output.getvalue())
+            self.assertIn("No ASN metadata available", output.getvalue())
 
 
 if __name__ == "__main__":

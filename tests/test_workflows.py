@@ -130,6 +130,16 @@ class WorkflowTests(unittest.TestCase):
                         }
                     ],
                 )
+                self.assertEqual(
+                    first_sender.call_args.kwargs["asn_summary"],
+                    {
+                        "items": [],
+                        "total_detections": 1,
+                        "resolved_detections": 0,
+                        "total_source_ips": 1,
+                        "resolved_source_ips": 0,
+                    },
+                )
             with closing(open_database_existing(path)) as database, database:
                 state = load_state(database, "2026-09-21")
                 state["period"]["samples"] = 2016
