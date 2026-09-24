@@ -63,7 +63,10 @@ sends all pending IPs in one connection with a five-second timeout. It commits
 RouterOS counters and detection aggregates before making that optional request,
 so an unavailable or malformed ASN response cannot roll back or fail traffic
 collection. Enabling this requires outbound TCP port 43 from the collecting
-host. No ASN connection is attempted while the option is disabled.
+host. WHOIS uses unencrypted TCP, so enabling this option discloses the queried
+source IPs to Team Cymru and network operators on that path; confirm that this
+fits the deployment's privacy policy. No ASN connection is attempted while the
+option is disabled.
 
 Each collection hydrates at most `MIKROTIK_ASN_BATCH_SIZE` due entries (default
 `100`), so enabling enrichment with historical source IPs drains the backlog
@@ -105,6 +108,23 @@ The persistent `run` mode uses three explicit positive-integer intervals:
 `MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS` (default `86400`). These intervals
 control when the existing workflows are checked; weekly and monthly report
 boundaries still use calendar periods in `MIKROTIK_REPORT_TIMEZONE`.
+
+## Upgrading from v0.1.0
+
+Version `0.1.1` adds optional ASN enrichment and advances SQLite
+`user_version` from `3` to `5`. Stop all collectors and report processes, then
+back up the SQLite database before upgrading. The first writing command after
+the upgrade performs the migration atomically, retains existing counter and
+detection history, and queues previously observed source IPs for gradual ASN
+hydration. ASN enrichment remains disabled unless `MIKROTIK_ASN_ENABLED=true`
+is added to the environment.
+
+After the database has migrated, `v0.1.0` will reject the newer schema. Restore
+the pre-upgrade backup if a rollback is required; do not downgrade the
+`user_version` manually. Existing historical detections are joined to the
+latest persisted ASN metadata for their source IP. ASN refreshes can therefore
+change the ASN attribution shown when the same historical range is rendered
+later; the application does not retain point-in-time ASN assignments.
 
 ## RouterOS detection-event setup
 

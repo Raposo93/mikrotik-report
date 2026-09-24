@@ -605,6 +605,39 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(tuple(row), (1, "2026-09-24T10:00:00+00:00"))
             self.assertEqual(version, SCHEMA_VERSION)
 
+    def test_schema_three_source_history_is_queued_for_asn_hydration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(sqlite3.connect(path)) as database:
+                database.executescript("""
+                    CREATE TABLE daily_source_detections (
+                        day TEXT NOT NULL,
+                        source_ip TEXT NOT NULL,
+                        detections INTEGER NOT NULL CHECK (detections > 0),
+                        PRIMARY KEY (day, source_ip)
+                    );
+                    INSERT INTO daily_source_detections
+                    VALUES ('2026-09-20', '192.0.2.10', 3);
+                    INSERT INTO daily_source_detections
+                    VALUES ('2026-09-21', '192.0.2.10', 4);
+                    PRAGMA user_version = 3;
+                """)
+            with closing(open_database_existing(path)) as database:
+                pending = pending_asn_ips(
+                    database,
+                    due_at="2026-09-24T00:00:00+00:00",
+                    stale_before="2026-08-25T00:00:00+00:00",
+                    limit=100,
+                )
+                row = database.execute(
+                    "SELECT source_ip, retry_count, next_retry_at FROM ip_asn_metadata"
+                ).fetchone()
+                version = database.execute("PRAGMA user_version").fetchone()[0]
+
+            self.assertEqual(pending, ["192.0.2.10"])
+            self.assertEqual(tuple(row), ("192.0.2.10", 0, None))
+            self.assertEqual(version, SCHEMA_VERSION)
+
 
 if __name__ == "__main__":
     unittest.main()
