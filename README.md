@@ -108,6 +108,23 @@ The persistent `run` mode uses three explicit positive-integer intervals:
 control when the existing workflows are checked; weekly and monthly report
 boundaries still use calendar periods in `MIKROTIK_REPORT_TIMEZONE`.
 
+## Upgrading from v0.1.1
+
+Version `0.1.2` includes a Python SMTP notifier in the container image, so the
+host no longer needs to provide `send-mail.sh`, Bash, or `msmtp`. Remove the
+`MIKROTIK_REPORT_NOTIFIER_HOST_PATH` setting and the `/usr/local/bin/send-mail`
+bind mount from the Compose deployment. Keep
+`MIKROTIK_REPORT_NOTIFIER=/usr/local/bin/send-mail`; the image also supplies
+that value as its default.
+
+Configure `MIKROTIK_SMTP_HOST` and, when the server requires authentication,
+`MIKROTIK_SMTP_USER` plus either `MIKROTIK_SMTP_PASSWORD` or a mounted
+`MIKROTIK_SMTP_PASSWORD_FILE`. STARTTLS on port `587` is the default; set
+`MIKROTIK_SMTP_TLS=implicit` for direct TLS on port `465`. Recreate the
+container after updating its private environment file. This release does not
+change the SQLite schema or stored report data, so no database migration is
+required. An external compatible notifier can still override the image default.
+
 ## Upgrading from v0.1.0
 
 Version `0.1.1` adds optional ASN enrichment and advances SQLite
