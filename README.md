@@ -328,6 +328,7 @@ normalized by `routeros.py` before it reaches aggregation or persistence.
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q mikrotik_report.py mikrotik_reporting
+./verify-systemd-units.sh
 python3 -m pip install -r requirements-check.txt
 python3 -m ruff check .
 python3 -m ruff format --check .
