@@ -195,3 +195,8 @@ def coverage(
 def comparable(period: Period, window: PeriodWindow, timezone_: ZoneInfo) -> bool:
     expected, _ = coverage(period, window, timezone_)
     return period["samples"] >= expected * MIN_COMPARABLE_COVERAGE
+
+
+def relative_change(current: int, previous: int) -> float | None:
+    """Return the fractional change, or None for a zero baseline."""
+    return (current - previous) / previous if previous else None

@@ -181,6 +181,7 @@ class RangeReportTests(unittest.TestCase):
             self.assertIn("Lookback: 2026-09-15 to 2026-09-16", rendered)
             self.assertIn("Source IPs: 1 distinct; 1 new", rendered)
             self.assertIn("Top 10 ranking movement", rendered)
+            self.assertIn("Report summary", rendered)
             self.assertIn(
                 "Unavailable: current period has low sample coverage", rendered
             )

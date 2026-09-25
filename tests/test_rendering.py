@@ -13,6 +13,132 @@ from mikrotik_reporting.rendering import render_monthly_report, render_weekly_re
 
 
 class RenderingTests(unittest.TestCase):
+    def test_summary_selects_five_deterministic_auditable_statements(self) -> None:
+        previous = empty_period("2026-09-14")
+        current = empty_period("2026-09-21")
+        previous["samples"] = current["samples"] = 2016
+        previous["totals"]["local"]["packets"] = 100
+        current["totals"]["local"]["packets"] = 142
+        recurrence: SourceRecurrenceSummary = {
+            "available": True,
+            "total_source_ips": 100,
+            "one_detection": 68,
+            "two_to_five_detections": 22,
+            "more_than_five_detections": 10,
+        }
+        concentration: DetectionConcentrationSummary = {
+            "sources": {
+                "available": True,
+                "total_detections": 200,
+                "top_three_detections": 42,
+                "top_ten_detections": 96,
+            },
+            "ports": {
+                "available": True,
+                "total_detections": 100,
+                "top_three_detections": 60,
+                "top_ten_detections": 90,
+            },
+        }
+        novelty: DetectionNoveltySummary = {
+            "lookback_start": "2026-08-24",
+            "lookback_end": "2026-09-21",
+            "sampled_days": 28,
+            "expected_days": 28,
+            "sources": {"available": True, "total": 10, "new": 4, "previously_seen": 6},
+            "ports": {"available": True, "total": 5, "new": 3, "previously_seen": 2},
+        }
+        churn: RankingChurnSummary = {
+            "previous_start": "2026-09-14",
+            "previous_end": "2026-09-21",
+            "unavailable_reason": None,
+            "sources": {"entered": 7, "retained": 3, "movement": {}},
+            "ports": {"entered": 2, "retained": 8, "movement": {}},
+        }
+        rendered = render_weekly_report(
+            current,
+            UTC,
+            {previous["start"]: previous},
+            source_recurrence=recurrence,
+            detection_concentration=concentration,
+            detection_novelty=novelty,
+            ranking_churn=churn,
+        )
+        summary = rendered.split("Report summary\n", 1)[1].split("\n\n", 1)[0]
+        self.assertEqual(
+            summary.splitlines(),
+            [
+                "  Local blocked packet volume increased by 42.0% versus the previous week.",
+                "  68.0% of observed source IPs had exactly one detection.",
+                "  Top 3 source IPs represented 21.0% of source detections.",
+                "  7 of the current Top 10 source IPs entered the ranking.",
+                "  3 destination port/protocol pairs were not observed in the prior lookback.",
+            ],
+        )
+        self.assertLess(
+            rendered.index("Report summary"), rendered.index("Data quality")
+        )
+        self.assertEqual(
+            rendered,
+            render_weekly_report(
+                current,
+                UTC,
+                {previous["start"]: previous},
+                source_recurrence=recurrence,
+                detection_concentration=concentration,
+                detection_novelty=novelty,
+                ranking_churn=churn,
+            ),
+        )
+        novelty["sampled_days"] = 1
+        churn["unavailable_reason"] = "previous period has low sample coverage"
+        partial = (
+            render_weekly_report(
+                current,
+                UTC,
+                {previous["start"]: previous},
+                detection_novelty=novelty,
+                ranking_churn=churn,
+            )
+            .split("Report summary\n", 1)[1]
+            .split("\n\n", 1)[0]
+        )
+        self.assertNotIn("entered the ranking", partial)
+        self.assertNotIn("prior lookback", partial)
+        preview = (
+            render_weekly_report(
+                current, UTC, completed=False, detection_novelty=novelty
+            )
+            .split("Report summary\n", 1)[1]
+            .split("\n\n", 1)[0]
+        )
+        self.assertNotIn("prior lookback", preview)
+
+    def test_summary_suppresses_unsupported_comparisons(self) -> None:
+        previous = empty_period("2026-09-14")
+        current = empty_period("2026-09-21")
+        current["samples"] = 2016
+        previous["samples"] = 1
+        previous["totals"]["local"]["packets"] = 100
+        current["totals"]["local"]["packets"] = 200
+        missing = render_weekly_report(current, UTC)
+        low = render_weekly_report(current, UTC, {previous["start"]: previous})
+        for rendered in (missing, low):
+            summary = rendered.split("Report summary\n", 1)[1].split("\n\n", 1)[0]
+            self.assertNotIn("packet volume increased", summary)
+            self.assertIn("No summary insights are available", summary)
+        current["samples"] = 1
+        incomplete = render_weekly_report(current, UTC)
+        self.assertIn(
+            "low sample coverage; figures describe observed data only", incomplete
+        )
+        self.assertNotIn(
+            "packet volume increased", incomplete.split("Data quality", 1)[0]
+        )
+        empty = render_monthly_report(empty_period("2026-09-01"), None, UTC)
+        self.assertIn("Report summary\n  Unavailable: no collector samples", empty)
+        self.assertLess(empty.index("Report summary"), empty.index("Data quality"))
+
     def test_ranking_churn_annotates_entries_and_missing_comparison(self) -> None:
         period = empty_period("2026-09-21")
         summary: RankingChurnSummary = {

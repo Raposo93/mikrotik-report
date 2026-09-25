@@ -522,7 +522,13 @@ compare with the previous calendar month; range rankings compare with the
 immediately preceding interval of equal length. Ranking ties use the existing
 deterministic source-IP and destination-port/protocol order. An incomplete
 preview or a missing or low-coverage comparison period is labeled unavailable.
-These rank changes describe detection-event lists, not severity. When
+These rank changes describe detection-event lists, not severity. A short report
+summary appears before the detailed metrics. It
+selects up to five statements in a fixed order from the packet comparison,
+source recurrence, source concentration, source ranking churn, and destination
+novelty already shown below. It omits unsupported comparisons and labels empty
+or low-coverage periods; the detailed sections remain the source for counts and
+coverage. The summary uses no network service or inferred threat labels. When
 persisted ASN metadata is available, the source-IP top includes the ASN and
 organization; report generation never
 performs a network lookup. A separate ASN top groups those detection events by

@@ -10,6 +10,8 @@ from .aggregation import (
     comparable,
     coverage,
     month_window,
+    previous_report_window,
+    relative_change,
     week_window,
 )
 from .models import (
@@ -30,7 +32,8 @@ from .models import (
 def _comparison_line(label: str, current: int, previous: int) -> str:
     change = current - previous
     direction = "up" if change > 0 else "down" if change < 0 else "steady"
-    percentage = f"{change / previous:+.1%}" if previous else "n/a (zero baseline)"
+    fraction = relative_change(current, previous)
+    percentage = f"{fraction:+.1%}" if fraction is not None else "n/a (zero baseline)"
     return (
         f"  {label}: {current:,} vs {previous:,}; "
         f"{change:+,} ({percentage}, {direction})"
@@ -155,6 +158,86 @@ def _activity_lines(
         f"  Rule rebaselines: {value(period['rule_rebaselines'])}",
         "",
     ]
+
+
+def _insight_lines(
+    period: Period,
+    window: PeriodWindow,
+    timezone_: ZoneInfo,
+    previous: Period | None,
+    source_recurrence: SourceRecurrenceSummary | None,
+    concentration: DetectionConcentrationSummary | None,
+    novelty: DetectionNoveltySummary | None,
+    churn: RankingChurnSummary | None,
+    *,
+    completed: bool = True,
+) -> list[str]:
+    lines = ["Report summary"]
+    if period["samples"] == 0:
+        return lines + ["  Unavailable: no collector samples were recorded.", ""]
+    statements: list[str] = []
+    current_comparable = comparable(period, window, timezone_)
+    if not current_comparable:
+        statements.append(
+            "Current period has low sample coverage; figures describe observed data only."
+        )
+    if completed and current_comparable and previous is not None:
+        previous_window = previous_report_window(window)
+        if comparable(previous, previous_window, timezone_):
+            current_packets = period["totals"]["local"]["packets"]
+            previous_packets = previous["totals"]["local"]["packets"]
+            change = relative_change(current_packets, previous_packets)
+            if change is not None and change != 0:
+                direction = "increased" if change > 0 else "decreased"
+                statements.append(
+                    f"Local blocked packet volume {direction} by {abs(change):.1%} "
+                    f"versus the previous {window.kind}."
+                )
+    if source_recurrence is not None and source_recurrence["available"]:
+        unique = source_recurrence["total_source_ips"]
+        if unique:
+            one_off_share = source_recurrence["one_detection"] / unique
+            statements.append(
+                f"{one_off_share:.1%} of observed source IPs had exactly one detection."
+            )
+    if concentration is not None:
+        sources = concentration["sources"]
+        if sources["available"] and sources["total_detections"]:
+            top_three_share = (
+                sources["top_three_detections"] / sources["total_detections"]
+            )
+            statements.append(
+                f"Top 3 source IPs represented {top_three_share:.1%} of source detections."
+            )
+    if (
+        completed
+        and current_comparable
+        and churn is not None
+        and churn["unavailable_reason"] is None
+    ):
+        sources_changed = churn["sources"]
+        if sources_changed is not None:
+            count = sources_changed["entered"] + sources_changed["retained"]
+            if count:
+                statements.append(
+                    f"{sources_changed['entered']} of the current Top {count} "
+                    "source IPs entered the ranking."
+                )
+    if (
+        completed
+        and current_comparable
+        and novelty is not None
+        and novelty["sampled_days"] == novelty["expected_days"]
+    ):
+        ports = novelty["ports"]
+        if ports["available"] and ports["total"]:
+            statements.append(
+                f"{ports['new']} destination port/protocol pairs were not observed "
+                "in the prior lookback."
+            )
+    if not statements:
+        statements.append("No summary insights are available for the observed period.")
+    return lines + [*(f"  {statement}" for statement in statements[:5]), ""]
 
 
 def _detected_port_lines(
@@ -426,12 +509,28 @@ def render_weekly_report(
     ranking_churn: RankingChurnSummary | None = None,
 ) -> str:
     window = week_window(period["start"])
+    previous_start = (
+        date.fromisoformat(period["start"]) - timedelta(days=7)
+    ).isoformat()
+    retained = history or {}
+    previous = retained.get(previous_start) if completed else None
     lines = [
         (
             f"MikroTik blocking report: {window.start} to {window.end} "
             f"({timezone_.key}, end exclusive)"
         ),
         "",
+        *_insight_lines(
+            period,
+            window,
+            timezone_,
+            previous,
+            source_recurrence,
+            detection_concentration,
+            detection_novelty,
+            ranking_churn,
+            completed=completed,
+        ),
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or [], ranking_churn),
         *_detected_source_lines(top_sources or [], ranking_churn),
@@ -454,13 +553,7 @@ def render_weekly_report(
         *(_asn_summary_lines(asn_summary) if asn_summary is not None else []),
     ]
     if completed:
-        previous_start = (
-            date.fromisoformat(period["start"]) - timedelta(days=7)
-        ).isoformat()
-        retained = history or {}
-        lines.extend(
-            _comparison_lines(period, retained.get(previous_start), timezone_, window)
-        )
+        lines.extend(_comparison_lines(period, previous, timezone_, window))
         lines.append("")
         lines.extend(_trend_lines(period, retained, timezone_))
         lines.append("")
@@ -487,6 +580,16 @@ def render_monthly_report(
             f"({timezone_.key}, end exclusive)"
         ),
         "",
+        *_insight_lines(
+            period,
+            window,
+            timezone_,
+            previous,
+            source_recurrence,
+            detection_concentration,
+            detection_novelty,
+            ranking_churn,
+        ),
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or [], ranking_churn),
         *_detected_source_lines(top_sources or [], ranking_churn),
@@ -534,6 +637,16 @@ def render_range_report(
             f"({timezone_.key}, start inclusive, end exclusive)"
         ),
         "",
+        *_insight_lines(
+            period,
+            window,
+            timezone_,
+            None,
+            source_recurrence,
+            detection_concentration,
+            detection_novelty,
+            ranking_churn,
+        ),
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or [], ranking_churn),
         *_detected_source_lines(top_sources or [], ranking_churn),
