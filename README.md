@@ -111,6 +111,26 @@ The persistent `run` mode uses three explicit positive-integer intervals:
 control when the existing workflows are checked; weekly and monthly report
 boundaries still use calendar periods in `MIKROTIK_REPORT_TIMEZONE`.
 
+## Upgrading from v0.1.3
+
+Version `0.1.4` adds report-only summaries from the existing daily detection
+aggregates: source recurrence buckets, Top 3 and Top 10 detection shares,
+new-versus-previously-seen sources and destination port/protocol pairs,
+Top 10 ranking movement, and a short deterministic summary. Weekly, monthly,
+test/preview, and explicit range reports use their documented calendar or
+range boundaries. The new sections describe observed detection events, not
+packets or confirmed attacks; incomplete history and low-coverage comparisons
+are labeled in the report.
+
+There is no configuration, RouterOS, collector, or SQLite schema change;
+`user_version` remains `6`. Existing daily aggregates are used as available,
+without reconstructing missing earlier events. Stop the running process before
+replacing its code or container image, keep the SQLite database and private
+environment file, then restart. A database backup is prudent before any
+deployment. Rolling back to `v0.1.3` does not require a database restore for
+this release because the schema and stored data are unchanged; its reports will
+simply omit the new sections.
+
 ## Upgrading from v0.1.2
 
 Version `0.1.3` preserves source-IP-to-destination context for new detection
