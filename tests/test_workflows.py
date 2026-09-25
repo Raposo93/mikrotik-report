@@ -732,6 +732,10 @@ class WorkflowTests(unittest.TestCase):
                     ],
                     1,
                 )
+                self.assertEqual(
+                    sender.call_args.kwargs["detection_novelty"]["lookback_start"],
+                    "2026-07-01",
+                )
                 process_monthly_reports(
                     database,
                     shared,
@@ -751,6 +755,10 @@ class WorkflowTests(unittest.TestCase):
                         "total_detections"
                     ],
                     1,
+                )
+                self.assertEqual(
+                    sender.call_args.kwargs["detection_novelty"]["lookback_start"],
+                    "2026-08-01",
                 )
                 self.assertEqual(
                     sender.call_args.kwargs["top_sources"],
@@ -852,6 +860,7 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("dominant 6881/udp", kwargs["input"])
             self.assertIn("Unique source IPs: 1", kwargs["input"])
             self.assertIn("Exactly 1 detection: 1", kwargs["input"])
+            self.assertIn("Lookback: 2026-08-17 to 2026-09-14", kwargs["input"])
             with closing(open_database_readonly(path)) as database:
                 self.assertEqual(load_state(database, "2026-09-14"), state)
 

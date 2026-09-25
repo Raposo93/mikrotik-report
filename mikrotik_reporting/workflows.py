@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from .aggregation import (
     apply_snapshot,
+    detection_lookback,
     month_start,
     month_window,
     range_window,
@@ -22,6 +23,7 @@ from .config import ASNConfig, CommonConfig, MailConfig, RouterOSConfig
 from .models import (
     ASNSummary,
     DetectionConcentrationSummary,
+    DetectionNoveltySummary,
     Period,
     PortDetection,
     SourceDetection,
@@ -39,6 +41,7 @@ from .storage import (
     aggregate_range,
     asn_detection_summary,
     detection_concentration_summary,
+    detection_novelty_summary,
     load_day,
     load_history,
     load_state,
@@ -86,6 +89,7 @@ def _send_weekly_report(
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
+    detection_novelty: DetectionNoveltySummary | None = None,
 ) -> None:
     subject = f"{mail.subject} ({period['start']})"
     body = render_weekly_report(
@@ -98,6 +102,7 @@ def _send_weekly_report(
         asn_summary=asn_summary,
         source_recurrence=source_recurrence,
         detection_concentration=detection_concentration,
+        detection_novelty=detection_novelty,
     )
     if preview_at is not None:
         subject = f"[TEST] {subject}"
@@ -119,6 +124,7 @@ def _send_monthly_report(
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
+    detection_novelty: DetectionNoveltySummary | None = None,
 ) -> None:
     subject = f"{mail.subject} ({period['start'][:7]})"
     body = render_monthly_report(
@@ -130,6 +136,7 @@ def _send_monthly_report(
         asn_summary,
         source_recurrence,
         detection_concentration,
+        detection_novelty,
     )
     _deliver_report(mail, subject, body)
 
@@ -163,6 +170,9 @@ def process_weekly_reports(
         concentration = detection_concentration_summary(
             database, window.start, window.end, sources, ports
         )
+        novelty = detection_novelty_summary(
+            database, window, detection_lookback(window)
+        )
         _send_weekly_report(
             mail,
             common,
@@ -173,6 +183,7 @@ def process_weekly_reports(
             asn_summary=asns,
             source_recurrence=recurrence,
             detection_concentration=concentration,
+            detection_novelty=novelty,
         )
         state["pending"].pop(0)
         save_state(database, state)
@@ -210,6 +221,9 @@ def process_monthly_reports(
         concentration = detection_concentration_summary(
             database, window.start, window.end, sources, ports
         )
+        novelty = detection_novelty_summary(
+            database, window, detection_lookback(window)
+        )
         _send_monthly_report(
             mail,
             common,
@@ -220,6 +234,7 @@ def process_monthly_reports(
             asn_summary=asns,
             source_recurrence=recurrence,
             detection_concentration=concentration,
+            detection_novelty=novelty,
         )
         mark_month_sent(database, start, now.isoformat())
         database.commit()
@@ -333,6 +348,9 @@ def send_preview(
         concentration = detection_concentration_summary(
             database, window.start, window.end, sources, ports
         )
+        novelty = detection_novelty_summary(
+            database, window, detection_lookback(window)
+        )
     if state["last_sample_at"] is None:
         raise ValueError("Run collect before sending a test report")
     apply_snapshot(state, snapshot, now, common.timezone)
@@ -346,6 +364,7 @@ def send_preview(
         asn_summary=asns,
         source_recurrence=recurrence,
         detection_concentration=concentration,
+        detection_novelty=novelty,
     )
     print(f"Sent test report for week {state['period']['start']} (state unchanged)")
 
@@ -363,6 +382,9 @@ def print_range_report(common: CommonConfig, start: date, end: date) -> None:
         concentration = detection_concentration_summary(
             database, window.start, window.end, sources, ports
         )
+        novelty = detection_novelty_summary(
+            database, window, detection_lookback(window)
+        )
     print(
         render_range_report(
             period or empty_period(window.start),
@@ -373,6 +395,7 @@ def print_range_report(common: CommonConfig, start: date, end: date) -> None:
             asns,
             recurrence,
             concentration,
+            novelty,
         ),
         end="",
     )

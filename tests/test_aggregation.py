@@ -6,9 +6,11 @@ from helpers import UTC, at, sample
 
 from mikrotik_reporting.aggregation import (
     apply_snapshot,
+    detection_lookback,
     expected_samples,
     month_window,
     next_month,
+    range_window,
     week_start,
     week_window,
 )
@@ -16,6 +18,29 @@ from mikrotik_reporting.models import initial_state
 
 
 class AggregationTests(unittest.TestCase):
+    def test_detection_lookbacks_use_local_calendar_dates(self) -> None:
+        self.assertEqual(
+            (
+                detection_lookback(week_window("2026-10-26")).start,
+                detection_lookback(week_window("2026-10-26")).end,
+            ),
+            ("2026-09-28", "2026-10-26"),
+        )
+        self.assertEqual(
+            (
+                detection_lookback(month_window("2026-03-01")).start,
+                detection_lookback(month_window("2026-03-01")).end,
+            ),
+            ("2026-02-01", "2026-03-01"),
+        )
+        self.assertEqual(
+            (
+                detection_lookback(range_window("2026-09-16", "2026-10-03")).start,
+                detection_lookback(range_window("2026-09-16", "2026-10-03")).end,
+            ),
+            ("2026-08-30", "2026-09-16"),
+        )
+
     def test_deltas_resets_and_week_boundary(self) -> None:
         state = initial_state("2026-09-14")
         apply_snapshot(state, sample(100, 10000, uptime=10000), at(20, 10), UTC)

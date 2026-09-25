@@ -501,13 +501,21 @@ detections represented by the top three and top ten destination `port/protocol`
 pairs. Each denominator includes all recorded detections in the period, even
 when more than ten entries exist. Shares use detection events, not firewall
 packets or bytes. Fewer than three or ten entries naturally yield a full share.
-The summary marks empty or unavailable periods explicitly. A
-period with collector samples but no source events is shown as empty; a period
+The summary marks empty or unavailable periods explicitly. A period with
+collector samples but no source events is shown as empty; a period
 without collector samples or source-detection history is shown as unavailable
 instead of as zero activity. The same exact calendar or explicit-range
-boundaries apply to weekly, monthly, preview, and range reports. When persisted
-ASN metadata is available,
-the source-IP top includes the ASN and organization; report generation never
+boundaries apply to weekly, monthly, preview, and range reports. Reports also
+compare distinct source IPs and destination `port/protocol` pairs with a fixed
+prior window: four completed weeks for weekly reports and previews,
+the previous calendar month for monthly reports, and the immediately preceding
+interval of equal length for range reports. "New" means not seen in the observed
+lookback; it does not mean new to the database or suspicious. Reports show how
+many lookback days have at least one collector sample and mark a partial
+lookback when any day is missing. Missing days can make previously seen entries
+appear new; sampled days do not guarantee continuous detection coverage. When
+persisted ASN metadata is available, the source-IP top includes the ASN and
+organization; report generation never
 performs a network lookup. A separate ASN top groups those detection events by
 persisted ASN and shows detection count, distinct source-IP count, share of all
 source-detection events, and resolved-metadata coverage. Unresolved IPs remain

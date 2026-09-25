@@ -2,15 +2,17 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from mikrotik_reporting.aggregation import detection_lookback, week_window
 from mikrotik_reporting.models import DetectionBatch, empty_period, initial_state
 from mikrotik_reporting.storage import (
     HISTORY_WEEKS,
     SCHEMA_VERSION,
     asn_detection_summary,
     detection_concentration_summary,
+    detection_novelty_summary,
     load_history,
     load_state,
     open_database,
@@ -20,6 +22,7 @@ from mikrotik_reporting.storage import (
     record_asn_lookup,
     record_detection_batch,
     retain_sent_week,
+    save_day,
     save_state,
     source_recurrence_summary,
     top_detected_ports,
@@ -28,6 +31,97 @@ from mikrotik_reporting.storage import (
 
 
 class StorageTests(unittest.TestCase):
+    def test_detection_novelty_mixed_known_new_and_partial_lookback(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            closing(open_database(Path(temporary) / "report.sqlite3")) as database,
+            database,
+        ):
+            for day in ("2026-09-20", "2026-09-21"):
+                aggregate = empty_period(day)
+                aggregate["samples"] = 1
+                save_day(database, aggregate)
+            for day, source in (
+                ("2026-08-23", "192.0.2.20"),
+                ("2026-09-20", "192.0.2.10"),
+                ("2026-09-21", "192.0.2.10"),
+                ("2026-09-21", "192.0.2.20"),
+            ):
+                database.execute(
+                    "INSERT INTO daily_source_detections VALUES (?, ?, 1)",
+                    (day, source),
+                )
+            for day, protocol, port in (
+                ("2026-08-23", "udp", 22),
+                ("2026-09-20", "tcp", 22),
+                ("2026-09-21", "tcp", 22),
+                ("2026-09-21", "udp", 22),
+            ):
+                database.execute(
+                    "INSERT INTO daily_detection_events VALUES (?, ?, ?, 1)",
+                    (day, protocol, port),
+                )
+            current = week_window("2026-09-21")
+            summary = detection_novelty_summary(
+                database, current, detection_lookback(current)
+            )
+            self.assertEqual(summary["lookback_start"], "2026-08-24")
+            self.assertEqual(
+                (summary["sampled_days"], summary["expected_days"]), (1, 28)
+            )
+            for key in ("sources", "ports"):
+                self.assertEqual(summary[key]["total"], 2)
+                self.assertEqual(summary[key]["new"], 1)
+                self.assertEqual(summary[key]["previously_seen"], 1)
+            database.execute(
+                "INSERT INTO daily_source_detections VALUES (?, ?, 1)",
+                ("2026-09-28", "192.0.2.10"),
+            )
+            database.execute(
+                "INSERT INTO daily_detection_events VALUES (?, ?, ?, 1)",
+                ("2026-09-28", "tcp", 22),
+            )
+            known_week = week_window("2026-09-28")
+            known = detection_novelty_summary(
+                database, known_week, detection_lookback(known_week)
+            )
+            self.assertEqual(known["sources"]["new"], 0)
+            self.assertEqual(known["ports"]["previously_seen"], 1)
+            database.execute(
+                "INSERT INTO daily_source_detections VALUES (?, ?, 1)",
+                ("2026-09-07", "192.0.2.30"),
+            )
+            database.execute(
+                "INSERT INTO daily_detection_events VALUES (?, ?, ?, 1)",
+                ("2026-09-07", "tcp", 80),
+            )
+            new_week = week_window("2026-09-07")
+            new = detection_novelty_summary(
+                database, new_week, detection_lookback(new_week)
+            )
+            self.assertEqual(new["sources"]["new"], 1)
+            self.assertEqual(new["ports"]["new"], 1)
+
+    def test_detection_novelty_complete_lookback_and_empty_period(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            closing(open_database(Path(temporary) / "report.sqlite3")) as database,
+            database,
+        ):
+            first = date(2026, 8, 24)
+            for offset in range(28):
+                day = (first + timedelta(days=offset)).isoformat()
+                aggregate = empty_period(day)
+                aggregate["samples"] = 1
+                save_day(database, aggregate)
+            current = week_window("2026-09-21")
+            summary = detection_novelty_summary(
+                database, current, detection_lookback(current)
+            )
+            self.assertEqual(summary["sampled_days"], 28)
+            self.assertEqual(summary["sources"]["total"], 0)
+            self.assertEqual(summary["ports"]["total"], 0)
+
     def test_detection_concentration_even_sources_and_distinct_ports(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,

@@ -4,6 +4,7 @@ from helpers import UTC
 
 from mikrotik_reporting.models import (
     DetectionConcentrationSummary,
+    DetectionNoveltySummary,
     SourceRecurrenceSummary,
     empty_period,
 )
@@ -11,6 +12,54 @@ from mikrotik_reporting.rendering import render_monthly_report, render_weekly_re
 
 
 class RenderingTests(unittest.TestCase):
+    def test_detection_novelty_reports_observed_lookback_and_partial_history(
+        self,
+    ) -> None:
+        period = empty_period("2026-09-21")
+        period["samples"] = 1
+        summary: DetectionNoveltySummary = {
+            "lookback_start": "2026-08-24",
+            "lookback_end": "2026-09-21",
+            "sampled_days": 1,
+            "expected_days": 28,
+            "sources": {"available": True, "total": 2, "new": 1, "previously_seen": 1},
+            "ports": {"available": True, "total": 2, "new": 1, "previously_seen": 1},
+        }
+        rendered = render_weekly_report(
+            period, UTC, completed=False, detection_novelty=summary
+        )
+        self.assertIn("2026-08-24 to 2026-09-21 (end exclusive", rendered)
+        self.assertIn("1 / 28 days sampled; partial lookback", rendered)
+        self.assertIn(
+            "Source IPs: 2 distinct; 1 new (not seen in observed lookback); "
+            "1 previously seen",
+            rendered,
+        )
+        self.assertIn("Missing lookback days may cause", rendered)
+        summary["sampled_days"] = 28
+        complete = render_weekly_report(
+            period, UTC, completed=False, detection_novelty=summary
+        )
+        self.assertIn("all days sampled", complete)
+        self.assertNotIn("Missing lookback days", complete)
+        summary["sources"] = {
+            "available": True,
+            "total": 0,
+            "new": 0,
+            "previously_seen": 0,
+        }
+        empty = render_weekly_report(
+            period, UTC, completed=False, detection_novelty=summary
+        )
+        self.assertIn("Source IPs: no detection events recorded.", empty)
+        unavailable = render_weekly_report(
+            empty_period("2026-09-21"),
+            UTC,
+            completed=False,
+            detection_novelty=summary,
+        )
+        self.assertIn("Source IPs: unavailable (no collector samples", unavailable)
+
     def test_detection_concentration_renders_independent_shares(self) -> None:
         period = empty_period("2026-09-21")
         period["samples"] = 1

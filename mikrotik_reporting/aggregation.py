@@ -55,6 +55,21 @@ def range_window(start: str, end: str) -> PeriodWindow:
     return PeriodWindow(start=start, end=end, kind="range")
 
 
+def detection_lookback(window: PeriodWindow) -> PeriodWindow:
+    """Return the fixed prior calendar window for detection novelty comparisons."""
+    start = date.fromisoformat(window.start)
+    if window.kind == "week":
+        previous = start - timedelta(weeks=4)
+    elif window.kind == "month":
+        previous = (start - timedelta(days=1)).replace(day=1)
+    elif window.kind == "range":
+        days = date.fromisoformat(window.end) - start
+        previous = start - days
+    else:
+        raise ValueError("Detection lookback requires a report window")
+    return PeriodWindow(start=previous.isoformat(), end=window.start, kind="range")
+
+
 def roll_period(state: State, start: str) -> None:
     current = state["period"]["start"]
     while current < start:

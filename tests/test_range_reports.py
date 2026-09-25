@@ -178,6 +178,8 @@ class RangeReportTests(unittest.TestCase):
             self.assertIn("Exactly 1 detection: 1", rendered)
             self.assertIn("Top 3 source IPs: 100.0%", rendered)
             self.assertIn("Top 10 destination ports: 100.0%", rendered)
+            self.assertIn("Lookback: 2026-09-15 to 2026-09-16", rendered)
+            self.assertIn("Source IPs: 1 distinct; 1 new", rendered)
 
 
 if __name__ == "__main__":

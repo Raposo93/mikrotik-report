@@ -19,7 +19,10 @@ from .models import (
     DetectionBatch,
     DetectionConcentration,
     DetectionConcentrationSummary,
+    DetectionNoveltyCounts,
+    DetectionNoveltySummary,
     Period,
+    PeriodWindow,
     PortDetection,
     SourceDetection,
     SourceRecurrenceSummary,
@@ -443,6 +446,56 @@ def detection_concentration_summary(
     return {
         "sources": concentration("daily_source_detections", sources),
         "ports": concentration("daily_detection_events", ports),
+    }
+
+
+def detection_novelty_summary(
+    database: sqlite3.Connection,
+    current: PeriodWindow,
+    lookback: PeriodWindow,
+) -> DetectionNoveltySummary:
+    """Compare distinct entries with the observed, bounded prior window."""
+    days = (date.fromisoformat(lookback.end) - date.fromisoformat(lookback.start)).days
+    sampled_days = sum(
+        json.loads(row["data"])["samples"] > 0
+        for row in database.execute(
+            "SELECT data FROM daily_aggregates WHERE day >= ? AND day < ?",
+            (lookback.start, lookback.end),
+        )
+    )
+
+    def counts(table: str, columns: str) -> DetectionNoveltyCounts:
+        available = bool(
+            database.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()
+        )
+        if not available:
+            return {"available": False, "total": 0, "new": 0, "previously_seen": 0}
+        query = f"SELECT DISTINCT {columns} FROM {table} WHERE day >= ? AND day < ?"
+        current_entries = {
+            tuple(row) for row in database.execute(query, (current.start, current.end))
+        }
+        previous_entries = {
+            tuple(row)
+            for row in database.execute(query, (lookback.start, lookback.end))
+        }
+        known = len(current_entries & previous_entries)
+        return {
+            "available": True,
+            "total": len(current_entries),
+            "new": len(current_entries) - known,
+            "previously_seen": known,
+        }
+
+    return {
+        "lookback_start": lookback.start,
+        "lookback_end": lookback.end,
+        "sampled_days": sampled_days,
+        "expected_days": days,
+        "sources": counts("daily_source_detections", "source_ip"),
+        "ports": counts("daily_detection_events", "protocol, destination_port"),
     }
 
 

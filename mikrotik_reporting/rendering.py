@@ -16,6 +16,7 @@ from .models import (
     METRICS,
     ASNSummary,
     DetectionConcentrationSummary,
+    DetectionNoveltySummary,
     Period,
     PeriodKind,
     PeriodWindow,
@@ -268,6 +269,46 @@ def _concentration_lines(
     return lines
 
 
+def _novelty_lines(period: Period, summary: DetectionNoveltySummary) -> list[str]:
+    sampled = summary["sampled_days"]
+    expected = summary["expected_days"]
+    completeness = "all days sampled" if sampled == expected else "partial lookback"
+    lines = [
+        "New and previously seen detections",
+        (
+            f"  Lookback: {summary['lookback_start']} to {summary['lookback_end']} "
+            f"(end exclusive; {sampled} / {expected} days sampled; {completeness})"
+        ),
+    ]
+    for key, label in (
+        ("sources", "Source IPs"),
+        ("ports", "Destination port/protocol pairs"),
+    ):
+        item = summary[key]
+        if not item["available"]:
+            lines.append(
+                f"  {label}: unavailable (detection history is not available)."
+            )
+        elif item["total"] == 0 and period["samples"] == 0:
+            lines.append(
+                f"  {label}: unavailable (no collector samples were recorded)."
+            )
+        elif item["total"] == 0:
+            lines.append(f"  {label}: no detection events recorded.")
+        else:
+            lines.append(
+                f"  {label}: {item['total']:,} distinct; "
+                f"{item['new']:,} new (not seen in observed lookback); "
+                f"{item['previously_seen']:,} previously seen"
+            )
+    if sampled < expected:
+        lines.append(
+            "  Missing lookback days may cause previously seen entries to appear new."
+        )
+    lines.append("")
+    return lines
+
+
 def _asn_summary_lines(summary: ASNSummary) -> list[str]:
     lines = ["Top source ASNs"]
     total_detections = summary["total_detections"]
@@ -348,6 +389,7 @@ def render_weekly_report(
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
+    detection_novelty: DetectionNoveltySummary | None = None,
 ) -> str:
     window = week_window(period["start"])
     lines = [
@@ -362,6 +404,11 @@ def render_weekly_report(
         *(
             _concentration_lines(period, detection_concentration)
             if detection_concentration is not None
+            else []
+        ),
+        *(
+            _novelty_lines(period, detection_novelty)
+            if detection_novelty is not None
             else []
         ),
         *(
@@ -395,6 +442,7 @@ def render_monthly_report(
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
+    detection_novelty: DetectionNoveltySummary | None = None,
 ) -> str:
     window = month_window(period["start"])
     lines = [
@@ -409,6 +457,11 @@ def render_monthly_report(
         *(
             _concentration_lines(period, detection_concentration)
             if detection_concentration is not None
+            else []
+        ),
+        *(
+            _novelty_lines(period, detection_novelty)
+            if detection_novelty is not None
             else []
         ),
         *(
@@ -433,6 +486,7 @@ def render_range_report(
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
+    detection_novelty: DetectionNoveltySummary | None = None,
 ) -> str:
     if window.kind != "range":
         raise ValueError("Range report requires an explicit range window")
@@ -448,6 +502,11 @@ def render_range_report(
         *(
             _concentration_lines(period, detection_concentration)
             if detection_concentration is not None
+            else []
+        ),
+        *(
+            _novelty_lines(period, detection_novelty)
+            if detection_novelty is not None
             else []
         ),
         *(

@@ -94,6 +94,22 @@ class DetectionConcentrationSummary(TypedDict):
     ports: DetectionConcentration
 
 
+class DetectionNoveltyCounts(TypedDict):
+    available: bool
+    total: int
+    new: int
+    previously_seen: int
+
+
+class DetectionNoveltySummary(TypedDict):
+    lookback_start: str
+    lookback_end: str
+    sampled_days: int
+    expected_days: int
+    sources: DetectionNoveltyCounts
+    ports: DetectionNoveltyCounts
+
+
 class Aggregate(TypedDict):
     totals: dict[str, dict[str, int]]
     max_sizes: dict[str, int]
