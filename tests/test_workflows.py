@@ -168,6 +168,70 @@ class WorkflowTests(unittest.TestCase):
                     history["2026-09-14"]["totals"]["local"]["packets"], 10
                 )
 
+    def test_weekly_detection_context_uses_exact_calendar_boundaries(self) -> None:
+        state = initial_state("2026-09-21")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            shared = common(path)
+            delivery = mail(Path(temporary))
+            with closing(open_database(path)) as database, database:
+                save_state(database, state)
+                record_detection_batch(database, {"fingerprints": [], "events": []})
+                record_detection_batch(
+                    database,
+                    {
+                        "fingerprints": ["before", "inside", "after"],
+                        "events": [
+                            {
+                                "fingerprint": "before",
+                                "day": "2026-09-20",
+                                "source_ip": "192.0.2.20",
+                                "protocol": "tcp",
+                                "destination_port": 20,
+                            },
+                            {
+                                "fingerprint": "inside",
+                                "day": "2026-09-21",
+                                "source_ip": "192.0.2.21",
+                                "protocol": "tcp",
+                                "destination_port": 21,
+                            },
+                            {
+                                "fingerprint": "after",
+                                "day": "2026-09-28",
+                                "source_ip": "192.0.2.28",
+                                "protocol": "tcp",
+                                "destination_port": 28,
+                            },
+                        ],
+                    },
+                )
+
+            with (
+                closing(open_database_existing(path)) as database,
+                patch("mikrotik_reporting.workflows._send_weekly_report") as sender,
+                redirect_stdout(StringIO()),
+            ):
+                process_weekly_reports(database, shared, delivery, at(28, 1))
+
+            sender.assert_called_once()
+            self.assertEqual(
+                sender.call_args.kwargs["top_sources"],
+                [
+                    {
+                        "source_ip": "192.0.2.21",
+                        "detections": 1,
+                        "destination_context": {
+                            "detections": 1,
+                            "destinations": 1,
+                            "dominant_protocol": "tcp",
+                            "dominant_destination_port": 21,
+                            "dominant_detections": 1,
+                        },
+                    }
+                ],
+            )
+
     def test_daily_aggregates_split_month_inside_same_week(self) -> None:
         madrid = ZoneInfo("Europe/Madrid")
         times = (

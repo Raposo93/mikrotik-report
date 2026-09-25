@@ -116,15 +116,29 @@ class RangeReportTests(unittest.TestCase):
                 record_detection_batch(
                     database,
                     {
-                        "fingerprints": ["range-port"],
+                        "fingerprints": ["before-range", "range-port", "after-range"],
                         "events": [
+                            {
+                                "fingerprint": "before-range",
+                                "day": "2026-09-15",
+                                "source_ip": "192.0.2.39",
+                                "protocol": "tcp",
+                                "destination_port": 21,
+                            },
                             {
                                 "fingerprint": "range-port",
                                 "day": "2026-09-16",
                                 "source_ip": "192.0.2.40",
                                 "protocol": "tcp",
                                 "destination_port": 22,
-                            }
+                            },
+                            {
+                                "fingerprint": "after-range",
+                                "day": "2026-09-17",
+                                "source_ip": "192.0.2.41",
+                                "protocol": "tcp",
+                                "destination_port": 23,
+                            },
                         ],
                     },
                 )
@@ -149,14 +163,17 @@ class RangeReportTests(unittest.TestCase):
             ):
                 main()
             lookup.assert_not_called()
-            self.assertIn("2026-09-16 to 2026-09-17", output.getvalue())
-            self.assertIn("192.0.2.40", output.getvalue())
-            self.assertIn("22/tcp", output.getvalue())
-            self.assertIn(
-                "Destination context: 1 port/protocol pair", output.getvalue()
-            )
-            self.assertIn("dominant 22/tcp", output.getvalue())
-            self.assertIn("No ASN metadata available", output.getvalue())
+            rendered = output.getvalue()
+            self.assertIn("2026-09-16 to 2026-09-17", rendered)
+            self.assertIn("192.0.2.40", rendered)
+            self.assertNotIn("192.0.2.39", rendered)
+            self.assertNotIn("192.0.2.41", rendered)
+            self.assertIn("22/tcp", rendered)
+            self.assertNotIn("21/tcp", rendered)
+            self.assertNotIn("23/tcp", rendered)
+            self.assertIn("Destination context: 1 port/protocol pair", rendered)
+            self.assertIn("dominant 22/tcp", rendered)
+            self.assertIn("No ASN metadata available", rendered)
 
 
 if __name__ == "__main__":
