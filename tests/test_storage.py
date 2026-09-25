@@ -10,6 +10,7 @@ from mikrotik_reporting.storage import (
     HISTORY_WEEKS,
     SCHEMA_VERSION,
     asn_detection_summary,
+    detection_concentration_summary,
     load_history,
     load_state,
     open_database,
@@ -27,6 +28,75 @@ from mikrotik_reporting.storage import (
 
 
 class StorageTests(unittest.TestCase):
+    def test_detection_concentration_even_sources_and_distinct_ports(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            closing(open_database(Path(temporary) / "report.sqlite3")) as database,
+            database,
+        ):
+            for number in range(10):
+                database.execute(
+                    "INSERT INTO daily_source_detections VALUES (?, ?, ?)",
+                    ("2026-09-21", f"192.0.2.{number + 1}", 1),
+                )
+            database.execute(
+                "INSERT INTO daily_detection_events VALUES (?, ?, ?, ?)",
+                ("2026-09-21", "tcp", 22, 10),
+            )
+            start, end = "2026-09-21", "2026-09-28"
+            summary = detection_concentration_summary(
+                database,
+                start,
+                end,
+                top_source_detections(database, start, end),
+                top_detected_ports(database, start, end),
+            )
+            self.assertEqual(summary["sources"]["top_three_detections"], 3)
+            self.assertEqual(summary["sources"]["total_detections"], 10)
+            self.assertEqual(summary["ports"]["top_three_detections"], 10)
+
+    def test_detection_concentration_uses_full_totals_and_exact_window(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            closing(open_database(Path(temporary) / "report.sqlite3")) as database,
+            database,
+        ):
+            for number in range(12):
+                source = f"192.0.2.{number + 1}"
+                count = 20 if number == 0 else 1
+                database.execute(
+                    "INSERT INTO daily_source_detections VALUES (?, ?, ?)",
+                    ("2026-09-21", source, count),
+                )
+                database.execute(
+                    "INSERT INTO daily_detection_events VALUES (?, ?, ?, ?)",
+                    ("2026-09-21", "tcp", number + 1, count),
+                )
+            for day in ("2026-09-20", "2026-09-28"):
+                database.execute(
+                    "INSERT INTO daily_source_detections VALUES (?, ?, ?)",
+                    (day, "203.0.113.30", 100),
+                )
+                database.execute(
+                    "INSERT INTO daily_detection_events VALUES (?, ?, ?, ?)",
+                    (day, "udp", 9999, 100),
+                )
+            sources = top_source_detections(database, "2026-09-21", "2026-09-28")
+            ports = top_detected_ports(database, "2026-09-21", "2026-09-28")
+            summary = detection_concentration_summary(
+                database, "2026-09-21", "2026-09-28", sources, ports
+            )
+            for item in (summary["sources"], summary["ports"]):
+                self.assertEqual(item["total_detections"], 31)
+                self.assertEqual(item["top_three_detections"], 22)
+                self.assertEqual(item["top_ten_detections"], 29)
+            self.assertEqual(
+                detection_concentration_summary(
+                    database, "2026-10-01", "2026-10-02", [], []
+                )["sources"]["total_detections"],
+                0,
+            )
+
     def test_state_survives_reopen_and_database_is_private(self) -> None:
         state = initial_state("2026-09-14")
         state["last_sample_at"] = "2026-09-14T00:00:00+00:00"

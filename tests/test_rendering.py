@@ -2,11 +2,76 @@ import unittest
 
 from helpers import UTC
 
-from mikrotik_reporting.models import SourceRecurrenceSummary, empty_period
+from mikrotik_reporting.models import (
+    DetectionConcentrationSummary,
+    SourceRecurrenceSummary,
+    empty_period,
+)
 from mikrotik_reporting.rendering import render_monthly_report, render_weekly_report
 
 
 class RenderingTests(unittest.TestCase):
+    def test_detection_concentration_renders_independent_shares(self) -> None:
+        period = empty_period("2026-09-21")
+        period["samples"] = 1
+        summary: DetectionConcentrationSummary = {
+            "sources": {
+                "available": True,
+                "total_detections": 20,
+                "top_three_detections": 12,
+                "top_ten_detections": 20,
+            },
+            "ports": {
+                "available": True,
+                "total_detections": 31,
+                "top_three_detections": 22,
+                "top_ten_detections": 29,
+            },
+        }
+        rendered = render_weekly_report(
+            period, UTC, completed=False, detection_concentration=summary
+        )
+        self.assertIn("Top 3 source IPs: 60.0%", rendered)
+        self.assertIn("Top 10 source IPs: 100.0%", rendered)
+        self.assertIn("Top 3 destination ports: 71.0%", rendered)
+        self.assertIn("Top 10 destination ports: 93.5%", rendered)
+        self.assertEqual(
+            rendered,
+            render_weekly_report(
+                period, UTC, completed=False, detection_concentration=summary
+            ),
+        )
+
+    def test_detection_concentration_empty_and_unavailable(self) -> None:
+        empty: DetectionConcentrationSummary = {
+            "sources": {
+                "available": True,
+                "total_detections": 0,
+                "top_three_detections": 0,
+                "top_ten_detections": 0,
+            },
+            "ports": {
+                "available": False,
+                "total_detections": 0,
+                "top_three_detections": 0,
+                "top_ten_detections": 0,
+            },
+        }
+        observed = empty_period("2026-09-01")
+        observed["samples"] = 1
+        rendered = render_monthly_report(
+            observed, None, UTC, detection_concentration=empty
+        )
+        self.assertIn(
+            "Source IPs: unavailable (no detection events recorded)", rendered
+        )
+        self.assertIn("Destination ports: unavailable (detection history", rendered)
+        self.assertNotIn("Top 3 source IPs:", rendered)
+        no_samples = render_monthly_report(
+            empty_period("2026-09-01"), None, UTC, detection_concentration=empty
+        )
+        self.assertIn("no collector samples were recorded", no_samples)
+
     def test_detected_destination_ports_are_compact_and_labeled(self) -> None:
         period = empty_period("2026-09-21")
         rendered = render_weekly_report(

@@ -495,6 +495,13 @@ the independent tops. A recurrence summary groups every source IP observed in
 the reporting period—not only entries in the Top 10—into sources with exactly
 one detection, two to five detections, or more than five detections. These are
 detection-event recurrence counts, not packet counts or confirmed attacks. A
+concentration summary shows the share of all source detections represented by
+the top three and top ten source IPs, and separately the share of all port
+detections represented by the top three and top ten destination `port/protocol`
+pairs. Each denominator includes all recorded detections in the period, even
+when more than ten entries exist. Shares use detection events, not firewall
+packets or bytes. Fewer than three or ten entries naturally yield a full share.
+The summary marks empty or unavailable periods explicitly. A
 period with collector samples but no source events is shown as empty; a period
 without collector samples or source-detection history is shown as unavailable
 instead of as zero activity. The same exact calendar or explicit-range

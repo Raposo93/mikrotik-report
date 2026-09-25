@@ -82,6 +82,18 @@ class SourceRecurrenceSummary(TypedDict):
     more_than_five_detections: int
 
 
+class DetectionConcentration(TypedDict):
+    available: bool
+    total_detections: int
+    top_three_detections: int
+    top_ten_detections: int
+
+
+class DetectionConcentrationSummary(TypedDict):
+    sources: DetectionConcentration
+    ports: DetectionConcentration
+
+
 class Aggregate(TypedDict):
     totals: dict[str, dict[str, int]]
     max_sizes: dict[str, int]

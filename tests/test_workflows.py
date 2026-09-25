@@ -157,6 +157,15 @@ class WorkflowTests(unittest.TestCase):
                         "more_than_five_detections": 0,
                     },
                 )
+                self.assertEqual(
+                    first_sender.call_args.kwargs["detection_concentration"]["sources"],
+                    {
+                        "available": True,
+                        "total_detections": 1,
+                        "top_three_detections": 1,
+                        "top_ten_detections": 1,
+                    },
+                )
             with closing(open_database_existing(path)) as database, database:
                 state = load_state(database, "2026-09-21")
                 state["period"]["samples"] = 2016
@@ -717,6 +726,12 @@ class WorkflowTests(unittest.TestCase):
                         "more_than_five_detections": 0,
                     },
                 )
+                self.assertEqual(
+                    sender.call_args.kwargs["detection_concentration"]["ports"][
+                        "total_detections"
+                    ],
+                    1,
+                )
                 process_monthly_reports(
                     database,
                     shared,
@@ -730,6 +745,12 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(
                     sender.call_args.kwargs["top_ports"][0]["destination_port"],
                     23,
+                )
+                self.assertEqual(
+                    sender.call_args.kwargs["detection_concentration"]["ports"][
+                        "total_detections"
+                    ],
+                    1,
                 )
                 self.assertEqual(
                     sender.call_args.kwargs["top_sources"],

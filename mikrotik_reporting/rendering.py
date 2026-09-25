@@ -15,6 +15,7 @@ from .aggregation import (
 from .models import (
     METRICS,
     ASNSummary,
+    DetectionConcentrationSummary,
     Period,
     PeriodKind,
     PeriodWindow,
@@ -233,6 +234,40 @@ def _source_recurrence_lines(
     ]
 
 
+def _concentration_lines(
+    period: Period, summary: DetectionConcentrationSummary
+) -> list[str]:
+    lines = ["Detection concentration"]
+    for key, label, heading in (
+        ("sources", "source IPs", "Source IPs"),
+        ("ports", "destination ports", "Destination ports"),
+    ):
+        item = summary[key]
+        if not item["available"]:
+            lines.append(
+                f"  {heading}: unavailable (detection history is not available)."
+            )
+        elif item["total_detections"] == 0:
+            detail = (
+                "no collector samples were recorded"
+                if period["samples"] == 0
+                else "no detection events recorded"
+            )
+            lines.append(f"  {heading}: unavailable ({detail}).")
+        else:
+            total = item["total_detections"]
+            for count, key_name in (
+                (3, "top_three_detections"),
+                (10, "top_ten_detections"),
+            ):
+                share = item[key_name] / total
+                lines.append(
+                    f"  Top {count} {label}: {share:.1%} of {label} detection events"
+                )
+    lines.extend(("  Shares use detection events, not firewall packets or bytes.", ""))
+    return lines
+
+
 def _asn_summary_lines(summary: ASNSummary) -> list[str]:
     lines = ["Top source ASNs"]
     total_detections = summary["total_detections"]
@@ -312,6 +347,7 @@ def render_weekly_report(
     top_sources: list[SourceDetection] | None = None,
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
+    detection_concentration: DetectionConcentrationSummary | None = None,
 ) -> str:
     window = week_window(period["start"])
     lines = [
@@ -323,6 +359,11 @@ def render_weekly_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(
+            _concentration_lines(period, detection_concentration)
+            if detection_concentration is not None
+            else []
+        ),
         *(
             _source_recurrence_lines(period, source_recurrence)
             if source_recurrence is not None
@@ -353,6 +394,7 @@ def render_monthly_report(
     top_sources: list[SourceDetection] | None = None,
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
+    detection_concentration: DetectionConcentrationSummary | None = None,
 ) -> str:
     window = month_window(period["start"])
     lines = [
@@ -364,6 +406,11 @@ def render_monthly_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(
+            _concentration_lines(period, detection_concentration)
+            if detection_concentration is not None
+            else []
+        ),
         *(
             _source_recurrence_lines(period, source_recurrence)
             if source_recurrence is not None
@@ -385,6 +432,7 @@ def render_range_report(
     top_sources: list[SourceDetection] | None = None,
     asn_summary: ASNSummary | None = None,
     source_recurrence: SourceRecurrenceSummary | None = None,
+    detection_concentration: DetectionConcentrationSummary | None = None,
 ) -> str:
     if window.kind != "range":
         raise ValueError("Range report requires an explicit range window")
@@ -397,6 +445,11 @@ def render_range_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(
+            _concentration_lines(period, detection_concentration)
+            if detection_concentration is not None
+            else []
+        ),
         *(
             _source_recurrence_lines(period, source_recurrence)
             if source_recurrence is not None

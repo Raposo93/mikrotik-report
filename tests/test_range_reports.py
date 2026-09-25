@@ -176,6 +176,8 @@ class RangeReportTests(unittest.TestCase):
             self.assertIn("No ASN metadata available", rendered)
             self.assertIn("Unique source IPs: 1", rendered)
             self.assertIn("Exactly 1 detection: 1", rendered)
+            self.assertIn("Top 3 source IPs: 100.0%", rendered)
+            self.assertIn("Top 10 destination ports: 100.0%", rendered)
 
 
 if __name__ == "__main__":

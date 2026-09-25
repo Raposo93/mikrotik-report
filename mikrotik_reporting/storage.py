@@ -17,6 +17,8 @@ from .models import (
     ASNMetadata,
     ASNSummary,
     DetectionBatch,
+    DetectionConcentration,
+    DetectionConcentrationSummary,
     Period,
     PortDetection,
     SourceDetection,
@@ -404,6 +406,44 @@ def top_detected_ports(
         }
         for row in rows
     ]
+
+
+def detection_concentration_summary(
+    database: sqlite3.Connection,
+    start: str,
+    end: str,
+    sources: list[SourceDetection],
+    ports: list[PortDetection],
+) -> DetectionConcentrationSummary:
+    """Compare ranked entries with all persisted detections in the window."""
+
+    def concentration(
+        table: str, ranked: list[SourceDetection] | list[PortDetection]
+    ) -> DetectionConcentration:
+        available = bool(
+            database.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()
+        )
+        total = 0
+        if available:
+            total = database.execute(
+                f"SELECT COALESCE(SUM(detections), 0) FROM {table} "
+                "WHERE day >= ? AND day < ?",
+                (start, end),
+            ).fetchone()[0]
+        return {
+            "available": available,
+            "total_detections": total,
+            "top_three_detections": sum(item["detections"] for item in ranked[:3]),
+            "top_ten_detections": sum(item["detections"] for item in ranked[:10]),
+        }
+
+    return {
+        "sources": concentration("daily_source_detections", sources),
+        "ports": concentration("daily_detection_events", ports),
+    }
 
 
 def top_source_detections(
