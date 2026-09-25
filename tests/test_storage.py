@@ -223,7 +223,19 @@ class StorageTests(unittest.TestCase):
             )
             self.assertEqual(
                 sources,
-                [{"source_ip": "192.0.2.50", "detections": 3}],
+                [
+                    {
+                        "source_ip": "192.0.2.50",
+                        "detections": 3,
+                        "destination_context": {
+                            "detections": 3,
+                            "destinations": 3,
+                            "dominant_protocol": "tcp",
+                            "dominant_destination_port": 22,
+                            "dominant_detections": 1,
+                        },
+                    }
+                ],
             )
 
     def test_router_reboot_resets_detection_cursor(self) -> None:
@@ -284,6 +296,7 @@ class StorageTests(unittest.TestCase):
                     "detection_log_cursor",
                     "daily_detection_events",
                     "daily_source_detections",
+                    "daily_source_port_detections",
                     "ip_asn_metadata",
                 ):
                     self.assertIsNotNone(
@@ -301,6 +314,41 @@ class StorageTests(unittest.TestCase):
                 open_database_existing(path)
             with self.assertRaisesRegex(ValueError, "newer than supported"):
                 open_database_readonly(path)
+
+    def test_schema_five_history_is_not_given_reconstructed_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(sqlite3.connect(path)) as database:
+                database.executescript("""
+                    CREATE TABLE daily_source_detections (
+                        day TEXT NOT NULL,
+                        source_ip TEXT NOT NULL,
+                        detections INTEGER NOT NULL CHECK (detections > 0),
+                        PRIMARY KEY (day, source_ip)
+                    );
+                    INSERT INTO daily_source_detections
+                    VALUES ('2026-09-21', '192.0.2.10', 4);
+                    PRAGMA user_version = 5;
+                """)
+
+            with closing(open_database_readonly(path)) as database:
+                self.assertEqual(
+                    top_source_detections(database, "2026-09-21", "2026-09-22"),
+                    [{"source_ip": "192.0.2.10", "detections": 4}],
+                )
+            with closing(open_database_existing(path)) as database:
+                sources = top_source_detections(database, "2026-09-21", "2026-09-22")
+                correlated_rows = database.execute(
+                    "SELECT COUNT(*) FROM daily_source_port_detections"
+                ).fetchone()[0]
+                version = database.execute("PRAGMA user_version").fetchone()[0]
+
+            self.assertEqual(
+                sources,
+                [{"source_ip": "192.0.2.10", "detections": 4}],
+            )
+            self.assertEqual(correlated_rows, 0)
+            self.assertEqual(version, SCHEMA_VERSION)
 
     def test_source_detections_are_aggregated_and_ranked(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -331,6 +379,81 @@ class StorageTests(unittest.TestCase):
                     {"source_ip": "192.0.2.10", "detections": 7},
                     {"source_ip": "192.0.2.20", "detections": 7},
                     {"source_ip": "192.0.2.30", "detections": 2},
+                ],
+            )
+
+    def test_source_destination_context_is_compact_and_deterministic(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.executemany(
+                    "INSERT INTO daily_source_detections "
+                    "(day, source_ip, detections) VALUES (?, ?, ?)",
+                    [
+                        ("2026-09-21", "192.0.2.10", 2),
+                        ("2026-09-22", "192.0.2.10", 2),
+                        ("2026-09-21", "192.0.2.20", 4),
+                        ("2026-09-21", "192.0.2.30", 4),
+                        ("2026-09-23", "192.0.2.40", 100),
+                    ],
+                )
+                database.executemany(
+                    "INSERT INTO daily_source_port_detections "
+                    "(day, source_ip, protocol, destination_port, detections) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [
+                        ("2026-09-21", "192.0.2.10", "udp", 6881, 2),
+                        ("2026-09-22", "192.0.2.10", "udp", 6881, 2),
+                        ("2026-09-21", "192.0.2.20", "tcp", 22, 2),
+                        ("2026-09-21", "192.0.2.20", "tcp", 53, 1),
+                        ("2026-09-21", "192.0.2.20", "udp", 53, 1),
+                        ("2026-09-21", "192.0.2.30", "tcp", 443, 1),
+                        ("2026-09-23", "192.0.2.40", "tcp", 23, 100),
+                    ],
+                )
+
+                sources = top_source_detections(
+                    database,
+                    "2026-09-21",
+                    "2026-09-23",
+                )
+
+            self.assertEqual(
+                sources,
+                [
+                    {
+                        "source_ip": "192.0.2.10",
+                        "detections": 4,
+                        "destination_context": {
+                            "detections": 4,
+                            "destinations": 1,
+                            "dominant_protocol": "udp",
+                            "dominant_destination_port": 6881,
+                            "dominant_detections": 4,
+                        },
+                    },
+                    {
+                        "source_ip": "192.0.2.20",
+                        "detections": 4,
+                        "destination_context": {
+                            "detections": 4,
+                            "destinations": 3,
+                            "dominant_protocol": "tcp",
+                            "dominant_destination_port": 22,
+                            "dominant_detections": 2,
+                        },
+                    },
+                    {
+                        "source_ip": "192.0.2.30",
+                        "detections": 4,
+                        "destination_context": {
+                            "detections": 1,
+                            "destinations": 1,
+                            "dominant_protocol": "tcp",
+                            "dominant_destination_port": 443,
+                            "dominant_detections": 1,
+                        },
+                    },
                 ],
             )
 

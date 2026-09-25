@@ -25,7 +25,7 @@ from .models import (
     initial_state,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 HISTORY_WEEKS = 12
 
 
@@ -186,12 +186,30 @@ def _migrate_to_5(database: sqlite3.Connection) -> None:
         raise
 
 
+def _migrate_to_6(database: sqlite3.Connection) -> None:
+    database.executescript("""
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS daily_source_port_detections (
+            day TEXT NOT NULL,
+            source_ip TEXT NOT NULL,
+            protocol TEXT NOT NULL,
+            destination_port INTEGER NOT NULL
+                CHECK (destination_port BETWEEN 0 AND 65535),
+            detections INTEGER NOT NULL CHECK (detections > 0),
+            PRIMARY KEY (day, source_ip, protocol, destination_port)
+        );
+        PRAGMA user_version = 6;
+        COMMIT;
+    """)
+
+
 MIGRATIONS = {
     1: _migrate_to_1,
     2: _migrate_to_2,
     3: _migrate_to_3,
     4: _migrate_to_4,
     5: _migrate_to_5,
+    6: _migrate_to_6,
 }
 
 
@@ -334,6 +352,19 @@ def record_detection_batch(
                 (event["day"], event["source_ip"]),
             )
             database.execute(
+                "INSERT INTO daily_source_port_detections "
+                "(day, source_ip, protocol, destination_port, detections) "
+                "VALUES (?, ?, ?, ?, 1) "
+                "ON CONFLICT(day, source_ip, protocol, destination_port) "
+                "DO UPDATE SET detections = detections + 1",
+                (
+                    event["day"],
+                    event["source_ip"],
+                    event["protocol"],
+                    event["destination_port"],
+                ),
+            )
+            database.execute(
                 "INSERT OR IGNORE INTO ip_asn_metadata (source_ip) VALUES (?)",
                 (event["source_ip"],),
             )
@@ -421,6 +452,39 @@ def top_source_detections(
             item["asn"] = row["asn"]
             item["asn_organization"] = row["organization"]
         results.append(item)
+    has_destination_context = database.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'daily_source_port_detections'"
+    ).fetchone()
+    if not results or not has_destination_context:
+        return results
+    source_ips = [item["source_ip"] for item in results]
+    placeholders = ", ".join("?" for _ in source_ips)
+    context_rows = database.execute(
+        "SELECT source_ip, protocol, destination_port, "
+        "SUM(detections) AS detections "
+        "FROM daily_source_port_detections "
+        "WHERE day >= ? AND day < ? "
+        f"AND source_ip IN ({placeholders}) "
+        "GROUP BY source_ip, protocol, destination_port "
+        "ORDER BY source_ip, detections DESC, destination_port, protocol",
+        (start, end, *source_ips),
+    ).fetchall()
+    contexts: dict[str, list[sqlite3.Row]] = {}
+    for row in context_rows:
+        contexts.setdefault(row["source_ip"], []).append(row)
+    for item in results:
+        source_context = contexts.get(item["source_ip"])
+        if not source_context:
+            continue
+        dominant = source_context[0]
+        item["destination_context"] = {
+            "detections": sum(row["detections"] for row in source_context),
+            "destinations": len(source_context),
+            "dominant_protocol": dominant["protocol"],
+            "dominant_destination_port": dominant["destination_port"],
+            "dominant_detections": dominant["detections"],
+        }
     return results
 
 

@@ -179,6 +179,32 @@ def _detected_source_lines(sources: list[SourceDetection]) -> list[str]:
         detections = item["detections"]
         noun = "detection" if detections == 1 else "detections"
         lines.append(f"  {label:<12} {detections:>8,} {noun}")
+        context = item.get("destination_context")
+        if context is None:
+            lines.append(
+                "    Destination context: unavailable for historical detections."
+            )
+            continue
+        contextualized = context["detections"]
+        coverage = ""
+        if contextualized != detections:
+            coverage = f"{contextualized:,} / {detections:,} detections available; "
+        destinations = context["destinations"]
+        destination_noun = (
+            "port/protocol pair" if destinations == 1 else "port/protocol pairs"
+        )
+        dominant = (
+            f"{context['dominant_destination_port']}/{context['dominant_protocol']}"
+        )
+        dominant_detections = context["dominant_detections"]
+        dominant_noun = "detection" if dominant_detections == 1 else "detections"
+        dominant_share = dominant_detections / contextualized
+        lines.append(
+            f"    Destination context: {coverage}{destinations:,} "
+            f"{destination_noun}; dominant {dominant}: "
+            f"{dominant_detections:,} {dominant_noun} "
+            f"({dominant_share:.1%} of contextualized detections)"
+        )
     lines.append("")
     return lines
 

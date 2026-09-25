@@ -108,8 +108,26 @@ class RenderingTests(unittest.TestCase):
                     "detections": 17,
                     "asn": "64496",
                     "asn_organization": "Example Network",
+                    "destination_context": {
+                        "detections": 17,
+                        "destinations": 1,
+                        "dominant_protocol": "udp",
+                        "dominant_destination_port": 6881,
+                        "dominant_detections": 17,
+                    },
                 },
-                {"source_ip": "192.0.2.20", "detections": 1},
+                {
+                    "source_ip": "192.0.2.20",
+                    "detections": 5,
+                    "destination_context": {
+                        "detections": 2,
+                        "destinations": 2,
+                        "dominant_protocol": "tcp",
+                        "dominant_destination_port": 22,
+                        "dominant_detections": 1,
+                    },
+                },
+                {"source_ip": "192.0.2.30", "detections": 1},
             ],
         )
 
@@ -117,7 +135,15 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("192.0.2.10", rendered)
         self.assertIn("AS64496 Example Network", rendered)
         self.assertIn("17 detections", rendered)
+        self.assertIn("1 port/protocol pair; dominant 6881/udp", rendered)
+        self.assertIn("17 detections (100.0% of contextualized detections)", rendered)
         self.assertIn("192.0.2.20", rendered)
+        self.assertIn("2 / 5 detections available", rendered)
+        self.assertIn("2 port/protocol pairs; dominant 22/tcp", rendered)
+        self.assertIn("192.0.2.30", rendered)
+        self.assertIn(
+            "Destination context: unavailable for historical detections.", rendered
+        )
         self.assertIn("1 detection", rendered)
 
     def test_empty_source_ip_data_is_explicit(self) -> None:

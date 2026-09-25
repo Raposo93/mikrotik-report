@@ -152,6 +152,10 @@ class RangeReportTests(unittest.TestCase):
             self.assertIn("2026-09-16 to 2026-09-17", output.getvalue())
             self.assertIn("192.0.2.40", output.getvalue())
             self.assertIn("22/tcp", output.getvalue())
+            self.assertIn(
+                "Destination context: 1 port/protocol pair", output.getvalue()
+            )
+            self.assertIn("dominant 22/tcp", output.getvalue())
             self.assertIn("No ASN metadata available", output.getvalue())
 
 

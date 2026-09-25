@@ -127,6 +127,13 @@ class WorkflowTests(unittest.TestCase):
                         {
                             "source_ip": "192.0.2.10",
                             "detections": 1,
+                            "destination_context": {
+                                "detections": 1,
+                                "destinations": 1,
+                                "dominant_protocol": "tcp",
+                                "dominant_destination_port": 22,
+                                "dominant_detections": 1,
+                            },
                         }
                     ],
                 )
@@ -244,7 +251,15 @@ class WorkflowTests(unittest.TestCase):
                     "SELECT protocol, destination_port, detections "
                     "FROM daily_detection_events"
                 ).fetchall()
+                source_ports = database.execute(
+                    "SELECT source_ip, protocol, destination_port, detections "
+                    "FROM daily_source_port_detections"
+                ).fetchall()
             self.assertEqual([tuple(row) for row in ports], [("tcp", 23, 1)])
+            self.assertEqual(
+                [tuple(row) for row in source_ports],
+                [("192.0.2.31", "tcp", 23, 1)],
+            )
 
     def test_disabled_asn_enrichment_never_performs_a_lookup(self) -> None:
         event: DetectionEvent = {
@@ -598,6 +613,13 @@ class WorkflowTests(unittest.TestCase):
                         {
                             "source_ip": "192.0.2.20",
                             "detections": 1,
+                            "destination_context": {
+                                "detections": 1,
+                                "destinations": 1,
+                                "dominant_protocol": "udp",
+                                "dominant_destination_port": 6881,
+                                "dominant_detections": 1,
+                            },
                         }
                     ],
                 )
@@ -621,6 +643,13 @@ class WorkflowTests(unittest.TestCase):
                         {
                             "source_ip": "192.0.2.21",
                             "detections": 1,
+                            "destination_context": {
+                                "detections": 1,
+                                "destinations": 1,
+                                "dominant_protocol": "tcp",
+                                "dominant_destination_port": 23,
+                                "dominant_detections": 1,
+                            },
                         }
                     ],
                 )
@@ -671,6 +700,22 @@ class WorkflowTests(unittest.TestCase):
             path = Path(temporary) / "report.sqlite3"
             with closing(open_database(path)) as database, database:
                 save_state(database, state)
+                record_detection_batch(database, {"fingerprints": [], "events": []})
+                record_detection_batch(
+                    database,
+                    {
+                        "fingerprints": ["preview-detection"],
+                        "events": [
+                            {
+                                "fingerprint": "preview-detection",
+                                "day": "2026-09-19",
+                                "source_ip": "192.0.2.50",
+                                "protocol": "udp",
+                                "destination_port": 6881,
+                            }
+                        ],
+                    },
+                )
             with (
                 patch(
                     "mikrotik_reporting.workflows.fetch_snapshot",
@@ -688,6 +733,8 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("--account", args[0])
             self.assertIn("TEST PREVIEW", kwargs["input"])
             self.assertIn("Packets dropped: 30", kwargs["input"])
+            self.assertIn("192.0.2.50", kwargs["input"])
+            self.assertIn("dominant 6881/udp", kwargs["input"])
             with closing(open_database_readonly(path)) as database:
                 self.assertEqual(load_state(database, "2026-09-14"), state)
 

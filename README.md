@@ -81,9 +81,12 @@ database contains last counter values, current/pending weekly totals, the last
 12 successfully emailed weekly aggregates, and daily aggregates for exact month
 boundaries and later historical queries. Monthly delivery status is stored in
 the same database. Daily destination-port counts, daily source-IP detection
-counts, and a bounded cursor of the RouterOS memory entries seen during the
-previous poll are also stored. ASN metadata is normalized into one row per
-source IP rather than copied into historical samples. Each row records the ASN,
+counts, daily source-IP-to-`port/protocol` detection counts, and a bounded
+cursor of the RouterOS memory entries seen during the previous poll are also
+stored. The correlated counts remain compact daily aggregates; individual
+detection events and raw log messages are not retained. ASN metadata is
+normalized into one row per source IP rather than copied into historical
+samples. Each row records the ASN,
 organization, successful metadata update time, latest attempt time, next retry
 time, retry count, and latest error. Failed or unmapped lookups retain the
 source IP and are retried by later collector runs when due. A failed refresh
@@ -142,6 +145,14 @@ latest persisted ASN metadata for their source IP. ASN refreshes can therefore
 change the ASN attribution shown when the same historical range is rendered
 later; the application does not retain point-in-time ASN assignments.
 
+Source-to-destination context advances SQLite `user_version` from `5` to `6`.
+The migration creates an empty correlated aggregate and does not attempt to
+reconstruct source-to-port relationships from the existing independent source
+and destination-port totals. Reports keep those historical source totals, mark
+destination context as unavailable when no correlated data exists, and show
+explicit contextualized-detection coverage when a requested period spans both
+old and new data.
+
 ## RouterOS detection-event setup
 
 Destination-port rankings use a dedicated in-memory RouterOS log buffer. Do not
@@ -189,12 +200,14 @@ only a local time.
 
 The first successful collector run establishes a conservative cursor over the
 existing buffer and does not claim those older entries. Later polls store only
-new matching TCP/UDP events as daily `protocol/destination-port` counts and
-daily source-IP detection counts. The cursor contains hashes for at most the
-entries in the current memory buffer; it does not grow with report history. A
-router reboot or buffer overflow before a poll can lose detection events, and
-those events cannot be reconstructed from firewall counters. An empty ranking
-therefore means no events were persisted, not proof that no detections occurred.
+new matching TCP/UDP events as daily `protocol/destination-port` counts, daily
+source-IP detection counts, and daily correlated
+`source-IP/protocol/destination-port` counts. The cursor contains hashes for at
+most the entries in the current memory buffer; it does not grow with report
+history. A router reboot or buffer overflow before a poll can lose detection
+events, and those events cannot be reconstructed from firewall counters. An
+empty ranking therefore means no events were persisted, not proof that no
+detections occurred.
 
 ## Persistent run mode
 
@@ -459,8 +472,13 @@ rule. Router reboot, counter reset, and rule rebaseline counts are informational
 not traffic metrics. A separate compact top lists up to ten destination
 `port/protocol` pairs by local detection-event count. These counts are neither
 packet volume nor unique attacks. A second top lists up to ten source IPs by
-recurring local detection-event count; it does not represent unique attacks or
-confirm that a source was malicious. When persisted ASN metadata is available,
+recurring local detection-event count and shows the number of distinct
+destination `port/protocol` pairs, the dominant pair, its detection count, and
+its share of detections with destination context. It does not represent unique
+attacks or confirm that a source was malicious. Historical source totals remain
+visible even when their destination context predates the correlated aggregate;
+the report labels unavailable or partial context rather than inferring it from
+the independent tops. When persisted ASN metadata is available,
 the source-IP top includes the ASN and organization; report generation never
 performs a network lookup. A separate ASN top groups those detection events by
 persisted ASN and shows detection count, distinct source-IP count, share of all
@@ -512,7 +530,8 @@ units. The implementation lives in the `mikrotik_reporting` package:
   counter deltas, and coverage;
 * `storage.py` owns the SQLite schema, migrations, counter aggregates, bounded
   detection cursor, daily destination-port counts, daily source-IP detection
-  counts, normalized ASN metadata, and ASN detection summaries;
+  counts, correlated source-to-destination counts, normalized ASN metadata,
+  and ASN detection summaries;
 * `rendering.py` produces report text without external side effects;
 * `workflows.py` coordinates transactions, collection, and direct invocation of
   the configured mail transport;

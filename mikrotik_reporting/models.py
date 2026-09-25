@@ -40,9 +40,18 @@ class SourceDetectionRequired(TypedDict):
     detections: int
 
 
+class SourceDestinationContext(TypedDict):
+    detections: int
+    destinations: int
+    dominant_protocol: str
+    dominant_destination_port: int
+    dominant_detections: int
+
+
 class SourceDetection(SourceDetectionRequired, total=False):
     asn: str
     asn_organization: str
+    destination_context: SourceDestinationContext
 
 
 class ASNMetadata(TypedDict):
