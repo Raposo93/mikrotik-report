@@ -10,7 +10,9 @@ from mikrotik_reporting.aggregation import (
     expected_samples,
     month_window,
     next_month,
+    previous_report_window,
     range_window,
+    ranking_changes,
     week_start,
     week_window,
 )
@@ -18,6 +20,30 @@ from mikrotik_reporting.models import initial_state
 
 
 class AggregationTests(unittest.TestCase):
+    def test_ranking_changes_track_churn_movement_and_ties(self) -> None:
+        previous = [str(number) for number in range(1, 11)]
+        self.assertEqual(ranking_changes(previous, previous)["retained"], 10)
+        self.assertEqual(
+            ranking_changes(previous, previous)["movement"]["1"], "unchanged #1"
+        )
+        replacement = [str(number) for number in range(11, 21)]
+        self.assertEqual(ranking_changes(replacement, previous)["entered"], 10)
+        changed = ranking_changes(["1", "6", "3", "11", "2"], previous)
+        self.assertEqual((changed["retained"], changed["entered"]), (4, 1))
+        self.assertEqual(changed["movement"]["6"], "up #6 to #2")
+        self.assertEqual(changed["movement"]["2"], "down #2 to #5")
+        self.assertEqual(changed["movement"]["11"], "entered Top 10")
+
+    def test_previous_ranking_windows_match_calendar_periods(self) -> None:
+        for window, expected in (
+            (week_window("2026-10-26"), ("2026-10-19", "2026-10-26")),
+            (month_window("2026-03-01"), ("2026-02-01", "2026-03-01")),
+            (range_window("2026-09-16", "2026-10-03"), ("2026-08-30", "2026-09-16")),
+        ):
+            with self.subTest(window=window):
+                previous = previous_report_window(window)
+                self.assertEqual((previous.start, previous.end), expected)
+
     def test_detection_lookbacks_use_local_calendar_dates(self) -> None:
         self.assertEqual(
             (

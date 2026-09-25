@@ -110,6 +110,20 @@ class DetectionNoveltySummary(TypedDict):
     ports: DetectionNoveltyCounts
 
 
+class RankingChanges(TypedDict):
+    entered: int
+    retained: int
+    movement: dict[str, str]
+
+
+class RankingChurnSummary(TypedDict):
+    previous_start: str
+    previous_end: str
+    unavailable_reason: str | None
+    sources: RankingChanges | None
+    ports: RankingChanges | None
+
+
 class Aggregate(TypedDict):
     totals: dict[str, dict[str, int]]
     max_sizes: dict[str, int]

@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from contextlib import closing, redirect_stderr, redirect_stdout
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -9,11 +9,18 @@ from zoneinfo import ZoneInfo
 
 from helpers import UTC, at, common, mail, router, sample
 
-from mikrotik_reporting.aggregation import apply_snapshot
+from mikrotik_reporting.aggregation import (
+    apply_snapshot,
+    month_window,
+    range_window,
+    week_window,
+)
 from mikrotik_reporting.config import ASNConfig
 from mikrotik_reporting.models import (
     DetectionBatch,
     DetectionEvent,
+    PortDetection,
+    SourceDetection,
     empty_period,
     initial_state,
 )
@@ -31,6 +38,7 @@ from mikrotik_reporting.storage import (
     save_state,
 )
 from mikrotik_reporting.workflows import (
+    _ranking_churn,
     collect,
     process_monthly_reports,
     process_weekly_reports,
@@ -40,6 +48,115 @@ from mikrotik_reporting.workflows import (
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_ranking_churn_monthly_and_range_use_matching_prior_window(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            closing(open_database(Path(temporary) / "report.sqlite3")) as database,
+            database,
+        ):
+            shared = common(Path(temporary) / "report.sqlite3")
+            first = date(2026, 8, 1)
+            for offset in range(31):
+                day = empty_period((first + timedelta(days=offset)).isoformat())
+                day["samples"] = 288
+                save_day(database, day)
+            database.execute(
+                "INSERT INTO daily_source_detections VALUES (?, ?, 1)",
+                ("2026-08-20", "192.0.2.10"),
+            )
+            database.execute(
+                "INSERT INTO daily_detection_events VALUES (?, ?, ?, 1)",
+                ("2026-08-20", "tcp", 22),
+            )
+            sources: list[SourceDetection] = [
+                {"source_ip": "192.0.2.10", "detections": 2}
+            ]
+            ports: list[PortDetection] = [
+                {"protocol": "tcp", "destination_port": 22, "detections": 2}
+            ]
+            month = empty_period("2026-09-01")
+            month["samples"] = 8640
+            monthly = _ranking_churn(
+                database, shared, month, month_window(month["start"]), sources, ports
+            )
+            self.assertEqual(monthly["previous_start"], "2026-08-01")
+            self.assertIsNone(monthly["unavailable_reason"])
+            range_period = empty_period("2026-08-22")
+            range_period["samples"] = 576
+            ranged = _ranking_churn(
+                database,
+                shared,
+                range_period,
+                range_window("2026-08-22", "2026-08-24"),
+                sources,
+                ports,
+            )
+            self.assertEqual(
+                (ranged["previous_start"], ranged["previous_end"]),
+                ("2026-08-20", "2026-08-22"),
+            )
+            self.assertIsNone(ranged["unavailable_reason"])
+
+    def test_ranking_churn_requires_comparable_previous_week(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            closing(open_database(Path(temporary) / "report.sqlite3")) as database,
+            database,
+        ):
+            shared = common(Path(temporary) / "report.sqlite3")
+            period = empty_period("2026-09-21")
+            period["samples"] = 2016
+            window = week_window(period["start"])
+            sources: list[SourceDetection] = [
+                {"source_ip": "192.0.2.10", "detections": 2}
+            ]
+            ports: list[PortDetection] = [
+                {"protocol": "tcp", "destination_port": 22, "detections": 2}
+            ]
+            missing = _ranking_churn(database, shared, period, window, sources, ports)
+            self.assertEqual(
+                missing["unavailable_reason"], "previous period has no retained samples"
+            )
+            previous_start = date(2026, 9, 14)
+            for offset in range(7):
+                day = empty_period(
+                    (previous_start + timedelta(days=offset)).isoformat()
+                )
+                day["samples"] = 1
+                save_day(database, day)
+            low = _ranking_churn(database, shared, period, window, sources, ports)
+            self.assertEqual(
+                low["unavailable_reason"], "previous period has low sample coverage"
+            )
+            for offset in range(7):
+                day = empty_period(
+                    (previous_start + timedelta(days=offset)).isoformat()
+                )
+                day["samples"] = 288
+                save_day(database, day)
+            database.execute(
+                "INSERT INTO daily_source_detections VALUES (?, ?, 1)",
+                ("2026-09-14", "192.0.2.10"),
+            )
+            database.execute(
+                "INSERT INTO daily_detection_events VALUES (?, ?, ?, 1)",
+                ("2026-09-14", "tcp", 22),
+            )
+            available = _ranking_churn(database, shared, period, window, sources, ports)
+            self.assertIsNone(available["unavailable_reason"])
+            source_changes = available["sources"]
+            port_changes = available["ports"]
+            assert source_changes is not None and port_changes is not None
+            self.assertEqual(source_changes["retained"], 1)
+            self.assertEqual(port_changes["movement"]["22/tcp"], "unchanged #1")
+            period["samples"] = 1
+            self.assertEqual(
+                _ranking_churn(database, shared, period, window, sources, ports)[
+                    "unavailable_reason"
+                ],
+                "current period has low sample coverage",
+            )
+
     def test_failed_weekly_mail_stays_pending_then_enters_history(self) -> None:
         state = initial_state("2026-09-14")
         apply_snapshot(state, sample(100, 10000), at(20), UTC)
@@ -259,6 +376,10 @@ class WorkflowTests(unittest.TestCase):
                     "two_to_five_detections": 0,
                     "more_than_five_detections": 0,
                 },
+            )
+            self.assertEqual(
+                sender.call_args.kwargs["ranking_churn"]["unavailable_reason"],
+                "current period has low sample coverage",
             )
 
     def test_daily_aggregates_split_month_inside_same_week(self) -> None:
@@ -861,6 +982,7 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("Unique source IPs: 1", kwargs["input"])
             self.assertIn("Exactly 1 detection: 1", kwargs["input"])
             self.assertIn("Lookback: 2026-08-17 to 2026-09-14", kwargs["input"])
+            self.assertIn("Unavailable: current week is incomplete", kwargs["input"])
             with closing(open_database_readonly(path)) as database:
                 self.assertEqual(load_state(database, "2026-09-14"), state)
 

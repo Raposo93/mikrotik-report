@@ -31,6 +31,39 @@ from mikrotik_reporting.storage import (
 
 
 class StorageTests(unittest.TestCase):
+    def test_detection_rankings_resolve_ties_by_key(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            closing(open_database(Path(temporary) / "report.sqlite3")) as database,
+            database,
+        ):
+            for source in ("192.0.2.20", "192.0.2.10"):
+                database.execute(
+                    "INSERT INTO daily_source_detections VALUES (?, ?, 1)",
+                    ("2026-09-21", source),
+                )
+            for protocol, port in (("udp", 22), ("tcp", 22), ("tcp", 21)):
+                database.execute(
+                    "INSERT INTO daily_detection_events VALUES (?, ?, ?, 1)",
+                    ("2026-09-21", protocol, port),
+                )
+            self.assertEqual(
+                [
+                    item["source_ip"]
+                    for item in top_source_detections(
+                        database, "2026-09-21", "2026-09-28"
+                    )
+                ],
+                ["192.0.2.10", "192.0.2.20"],
+            )
+            self.assertEqual(
+                [
+                    (item["destination_port"], item["protocol"])
+                    for item in top_detected_ports(database, "2026-09-21", "2026-09-28")
+                ],
+                [(21, "tcp"), (22, "tcp"), (22, "udp")],
+            )
+
     def test_detection_novelty_mixed_known_new_and_partial_lookback(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,

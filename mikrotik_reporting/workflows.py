@@ -10,10 +10,13 @@ from datetime import date, datetime, timedelta, timezone
 
 from .aggregation import (
     apply_snapshot,
+    comparable,
     detection_lookback,
     month_start,
     month_window,
+    previous_report_window,
     range_window,
+    ranking_changes,
     roll_period,
     week_start,
     week_window,
@@ -25,7 +28,9 @@ from .models import (
     DetectionConcentrationSummary,
     DetectionNoveltySummary,
     Period,
+    PeriodWindow,
     PortDetection,
+    RankingChurnSummary,
     SourceDetection,
     SourceRecurrenceSummary,
     empty_period,
@@ -78,6 +83,54 @@ def _deliver_report(config: MailConfig, subject: str, body: str) -> None:
     subprocess.run(command, input=body, text=True, check=True)
 
 
+def _ranking_churn(
+    database: sqlite3.Connection,
+    common: CommonConfig,
+    period: Period,
+    window: PeriodWindow,
+    sources: list[SourceDetection],
+    ports: list[PortDetection],
+    *,
+    preview: bool = False,
+) -> RankingChurnSummary:
+    previous_window = previous_report_window(window)
+    summary: RankingChurnSummary = {
+        "previous_start": previous_window.start,
+        "previous_end": previous_window.end,
+        "unavailable_reason": None,
+        "sources": None,
+        "ports": None,
+    }
+    if preview:
+        summary["unavailable_reason"] = "current week is incomplete"
+        return summary
+    if not comparable(period, window, common.timezone):
+        summary["unavailable_reason"] = "current period has low sample coverage"
+        return summary
+    previous = aggregate_range(database, previous_window.start, previous_window.end)
+    if previous is None:
+        summary["unavailable_reason"] = "previous period has no retained samples"
+        return summary
+    if not comparable(previous, previous_window, common.timezone):
+        summary["unavailable_reason"] = "previous period has low sample coverage"
+        return summary
+    previous_sources = top_source_detections(
+        database, previous_window.start, previous_window.end
+    )
+    previous_ports = top_detected_ports(
+        database, previous_window.start, previous_window.end
+    )
+    summary["sources"] = ranking_changes(
+        [item["source_ip"] for item in sources],
+        [item["source_ip"] for item in previous_sources],
+    )
+    summary["ports"] = ranking_changes(
+        [f"{item['destination_port']}/{item['protocol']}" for item in ports],
+        [f"{item['destination_port']}/{item['protocol']}" for item in previous_ports],
+    )
+    return summary
+
+
 def _send_weekly_report(
     mail: MailConfig,
     common: CommonConfig,
@@ -90,6 +143,7 @@ def _send_weekly_report(
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
+    ranking_churn: RankingChurnSummary | None = None,
 ) -> None:
     subject = f"{mail.subject} ({period['start']})"
     body = render_weekly_report(
@@ -103,6 +157,7 @@ def _send_weekly_report(
         source_recurrence=source_recurrence,
         detection_concentration=detection_concentration,
         detection_novelty=detection_novelty,
+        ranking_churn=ranking_churn,
     )
     if preview_at is not None:
         subject = f"[TEST] {subject}"
@@ -125,6 +180,7 @@ def _send_monthly_report(
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
+    ranking_churn: RankingChurnSummary | None = None,
 ) -> None:
     subject = f"{mail.subject} ({period['start'][:7]})"
     body = render_monthly_report(
@@ -137,6 +193,7 @@ def _send_monthly_report(
         source_recurrence,
         detection_concentration,
         detection_novelty,
+        ranking_churn,
     )
     _deliver_report(mail, subject, body)
 
@@ -173,6 +230,7 @@ def process_weekly_reports(
         novelty = detection_novelty_summary(
             database, window, detection_lookback(window)
         )
+        churn = _ranking_churn(database, common, period, window, sources, ports)
         _send_weekly_report(
             mail,
             common,
@@ -184,6 +242,7 @@ def process_weekly_reports(
             source_recurrence=recurrence,
             detection_concentration=concentration,
             detection_novelty=novelty,
+            ranking_churn=churn,
         )
         state["pending"].pop(0)
         save_state(database, state)
@@ -224,6 +283,7 @@ def process_monthly_reports(
         novelty = detection_novelty_summary(
             database, window, detection_lookback(window)
         )
+        churn = _ranking_churn(database, common, period, window, sources, ports)
         _send_monthly_report(
             mail,
             common,
@@ -235,6 +295,7 @@ def process_monthly_reports(
             source_recurrence=recurrence,
             detection_concentration=concentration,
             detection_novelty=novelty,
+            ranking_churn=churn,
         )
         mark_month_sent(database, start, now.isoformat())
         database.commit()
@@ -351,6 +412,9 @@ def send_preview(
         novelty = detection_novelty_summary(
             database, window, detection_lookback(window)
         )
+        churn = _ranking_churn(
+            database, common, state["period"], window, sources, ports, preview=True
+        )
     if state["last_sample_at"] is None:
         raise ValueError("Run collect before sending a test report")
     apply_snapshot(state, snapshot, now, common.timezone)
@@ -365,6 +429,7 @@ def send_preview(
         source_recurrence=recurrence,
         detection_concentration=concentration,
         detection_novelty=novelty,
+        ranking_churn=churn,
     )
     print(f"Sent test report for week {state['period']['start']} (state unchanged)")
 
@@ -385,6 +450,14 @@ def print_range_report(common: CommonConfig, start: date, end: date) -> None:
         novelty = detection_novelty_summary(
             database, window, detection_lookback(window)
         )
+        churn = _ranking_churn(
+            database,
+            common,
+            period or empty_period(window.start),
+            window,
+            sources,
+            ports,
+        )
     print(
         render_range_report(
             period or empty_period(window.start),
@@ -396,6 +469,7 @@ def print_range_report(common: CommonConfig, start: date, end: date) -> None:
             recurrence,
             concentration,
             novelty,
+            churn,
         ),
         end="",
     )

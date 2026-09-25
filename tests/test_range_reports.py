@@ -180,6 +180,10 @@ class RangeReportTests(unittest.TestCase):
             self.assertIn("Top 10 destination ports: 100.0%", rendered)
             self.assertIn("Lookback: 2026-09-15 to 2026-09-16", rendered)
             self.assertIn("Source IPs: 1 distinct; 1 new", rendered)
+            self.assertIn("Top 10 ranking movement", rendered)
+            self.assertIn(
+                "Unavailable: current period has low sample coverage", rendered
+            )
 
 
 if __name__ == "__main__":

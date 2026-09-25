@@ -5,6 +5,7 @@ from helpers import UTC
 from mikrotik_reporting.models import (
     DetectionConcentrationSummary,
     DetectionNoveltySummary,
+    RankingChurnSummary,
     SourceRecurrenceSummary,
     empty_period,
 )
@@ -12,6 +13,50 @@ from mikrotik_reporting.rendering import render_monthly_report, render_weekly_re
 
 
 class RenderingTests(unittest.TestCase):
+    def test_ranking_churn_annotates_entries_and_missing_comparison(self) -> None:
+        period = empty_period("2026-09-21")
+        summary: RankingChurnSummary = {
+            "previous_start": "2026-09-14",
+            "previous_end": "2026-09-21",
+            "unavailable_reason": None,
+            "sources": {
+                "entered": 1,
+                "retained": 1,
+                "movement": {
+                    "192.0.2.10": "up #3 to #1",
+                    "192.0.2.20": "entered Top 10",
+                },
+            },
+            "ports": {
+                "entered": 0,
+                "retained": 1,
+                "movement": {"22/tcp": "unchanged #1"},
+            },
+        }
+        rendered = render_weekly_report(
+            period,
+            UTC,
+            completed=False,
+            top_sources=[
+                {"source_ip": "192.0.2.10", "detections": 5},
+                {"source_ip": "192.0.2.20", "detections": 3},
+            ],
+            top_ports=[{"protocol": "tcp", "destination_port": 22, "detections": 8}],
+            ranking_churn=summary,
+        )
+        self.assertIn("5 detections [up #3 to #1]", rendered)
+        self.assertIn("3 detections [entered Top 10]", rendered)
+        self.assertIn("8 detections [unchanged #1]", rendered)
+        self.assertIn("Source IPs: 1 remained; 1 entered.", rendered)
+        summary["unavailable_reason"] = "previous period has low sample coverage"
+        summary["sources"] = summary["ports"] = None
+        unavailable = render_weekly_report(
+            period, UTC, completed=False, ranking_churn=summary
+        )
+        self.assertIn(
+            "Unavailable: previous period has low sample coverage", unavailable
+        )
+
     def test_detection_novelty_reports_observed_lookback_and_partial_history(
         self,
     ) -> None:

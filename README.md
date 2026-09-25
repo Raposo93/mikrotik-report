@@ -514,6 +514,15 @@ lookback; it does not mean new to the database or suspicious. Reports show how
 many lookback days have at least one collector sample and mark a partial
 lookback when any day is missing. Missing days can make previously seen entries
 appear new; sampled days do not guarantee continuous detection coverage. When
+both the current period and the immediately preceding comparable calendar
+period have at least 90% sample coverage, the Top 10 source and destination
+rankings also show which entries remained, entered, or moved in position.
+Weekly rankings compare with the previous calendar week; monthly rankings
+compare with the previous calendar month; range rankings compare with the
+immediately preceding interval of equal length. Ranking ties use the existing
+deterministic source-IP and destination-port/protocol order. An incomplete
+preview or a missing or low-coverage comparison period is labeled unavailable.
+These rank changes describe detection-event lists, not severity. When
 persisted ASN metadata is available, the source-IP top includes the ASN and
 organization; report generation never
 performs a network lookup. A separate ASN top groups those detection events by

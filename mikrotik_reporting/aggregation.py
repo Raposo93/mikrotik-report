@@ -10,6 +10,7 @@ from .models import (
     SOURCES,
     Period,
     PeriodWindow,
+    RankingChanges,
     Snapshot,
     State,
     empty_period,
@@ -68,6 +69,43 @@ def detection_lookback(window: PeriodWindow) -> PeriodWindow:
     else:
         raise ValueError("Detection lookback requires a report window")
     return PeriodWindow(start=previous.isoformat(), end=window.start, kind="range")
+
+
+def previous_report_window(window: PeriodWindow) -> PeriodWindow:
+    """Return the immediately preceding period with matching calendar semantics."""
+    start = date.fromisoformat(window.start)
+    if window.kind == "week":
+        return week_window((start - timedelta(days=7)).isoformat())
+    if window.kind == "month":
+        return month_window((start - timedelta(days=1)).replace(day=1).isoformat())
+    if window.kind == "range":
+        length = date.fromisoformat(window.end) - start
+        return range_window((start - length).isoformat(), window.start)
+    raise ValueError("Ranking comparison requires a report window")
+
+
+def ranking_changes(current: list[str], previous: list[str]) -> RankingChanges:
+    """Compare ranked keys; the supplied order resolves all ties."""
+    previous_ranks = {key: rank for rank, key in enumerate(previous, 1)}
+    movement = {}
+    retained = 0
+    for rank, key in enumerate(current, 1):
+        old = previous_ranks.get(key)
+        if old is None:
+            movement[key] = "entered Top 10"
+        else:
+            retained += 1
+            if old == rank:
+                movement[key] = f"unchanged #{rank}"
+            elif old > rank:
+                movement[key] = f"up #{old} to #{rank}"
+            else:
+                movement[key] = f"down #{old} to #{rank}"
+    return {
+        "entered": len(current) - retained,
+        "retained": retained,
+        "movement": movement,
+    }
 
 
 def roll_period(state: State, start: str) -> None:

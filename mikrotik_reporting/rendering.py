@@ -21,6 +21,7 @@ from .models import (
     PeriodKind,
     PeriodWindow,
     PortDetection,
+    RankingChurnSummary,
     SourceDetection,
     SourceRecurrenceSummary,
 )
@@ -156,7 +157,9 @@ def _activity_lines(
     ]
 
 
-def _detected_port_lines(ports: list[PortDetection]) -> list[str]:
+def _detected_port_lines(
+    ports: list[PortDetection], churn: RankingChurnSummary | None = None
+) -> list[str]:
     lines = ["Top detected destination ports"]
     if not ports:
         return lines + ["  No detection events recorded.", ""]
@@ -164,12 +167,16 @@ def _detected_port_lines(ports: list[PortDetection]) -> list[str]:
         label = f"{item['destination_port']}/{item['protocol']}"
         detections = item["detections"]
         noun = "detection" if detections == 1 else "detections"
-        lines.append(f"  {label:<12} {detections:>8,} {noun}")
+        movement = churn["ports"] if churn is not None else None
+        suffix = f" [{movement['movement'][label]}]" if movement is not None else ""
+        lines.append(f"  {label:<12} {detections:>8,} {noun}{suffix}")
     lines.append("")
     return lines
 
 
-def _detected_source_lines(sources: list[SourceDetection]) -> list[str]:
+def _detected_source_lines(
+    sources: list[SourceDetection], churn: RankingChurnSummary | None = None
+) -> list[str]:
     lines = ["Top recurring source IPs"]
     if not sources:
         return lines + ["  No detection events recorded.", ""]
@@ -181,7 +188,13 @@ def _detected_source_lines(sources: list[SourceDetection]) -> list[str]:
             label += f" (AS{asn} {organization})"
         detections = item["detections"]
         noun = "detection" if detections == 1 else "detections"
-        lines.append(f"  {label:<12} {detections:>8,} {noun}")
+        movement = churn["sources"] if churn is not None else None
+        suffix = (
+            f" [{movement['movement'][item['source_ip']]}]"
+            if movement is not None
+            else ""
+        )
+        lines.append(f"  {label:<12} {detections:>8,} {noun}{suffix}")
         context = item.get("destination_context")
         if context is None:
             lines.append(
@@ -309,6 +322,26 @@ def _novelty_lines(period: Period, summary: DetectionNoveltySummary) -> list[str
     return lines
 
 
+def _ranking_churn_lines(summary: RankingChurnSummary) -> list[str]:
+    lines = [
+        "Top 10 ranking movement",
+        (
+            f"  Previous period: {summary['previous_start']} to "
+            f"{summary['previous_end']} (end exclusive)"
+        ),
+    ]
+    if summary["unavailable_reason"] is not None:
+        return lines + [f"  Unavailable: {summary['unavailable_reason']}.", ""]
+    for key, label in (("sources", "Source IPs"), ("ports", "Destination ports")):
+        item = summary[key]
+        if item is not None:
+            lines.append(
+                f"  {label}: {item['retained']} remained; {item['entered']} entered."
+            )
+    lines.append("")
+    return lines
+
+
 def _asn_summary_lines(summary: ASNSummary) -> list[str]:
     lines = ["Top source ASNs"]
     total_detections = summary["total_detections"]
@@ -390,6 +423,7 @@ def render_weekly_report(
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
+    ranking_churn: RankingChurnSummary | None = None,
 ) -> str:
     window = week_window(period["start"])
     lines = [
@@ -399,8 +433,9 @@ def render_weekly_report(
         ),
         "",
         *_activity_lines(period, timezone_, window),
-        *_detected_port_lines(top_ports or []),
-        *_detected_source_lines(top_sources or []),
+        *_detected_port_lines(top_ports or [], ranking_churn),
+        *_detected_source_lines(top_sources or [], ranking_churn),
+        *(_ranking_churn_lines(ranking_churn) if ranking_churn is not None else []),
         *(
             _concentration_lines(period, detection_concentration)
             if detection_concentration is not None
@@ -443,6 +478,7 @@ def render_monthly_report(
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
+    ranking_churn: RankingChurnSummary | None = None,
 ) -> str:
     window = month_window(period["start"])
     lines = [
@@ -452,8 +488,9 @@ def render_monthly_report(
         ),
         "",
         *_activity_lines(period, timezone_, window),
-        *_detected_port_lines(top_ports or []),
-        *_detected_source_lines(top_sources or []),
+        *_detected_port_lines(top_ports or [], ranking_churn),
+        *_detected_source_lines(top_sources or [], ranking_churn),
+        *(_ranking_churn_lines(ranking_churn) if ranking_churn is not None else []),
         *(
             _concentration_lines(period, detection_concentration)
             if detection_concentration is not None
@@ -487,6 +524,7 @@ def render_range_report(
     source_recurrence: SourceRecurrenceSummary | None = None,
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
+    ranking_churn: RankingChurnSummary | None = None,
 ) -> str:
     if window.kind != "range":
         raise ValueError("Range report requires an explicit range window")
@@ -497,8 +535,9 @@ def render_range_report(
         ),
         "",
         *_activity_lines(period, timezone_, window),
-        *_detected_port_lines(top_ports or []),
-        *_detected_source_lines(top_sources or []),
+        *_detected_port_lines(top_ports or [], ranking_churn),
+        *_detected_source_lines(top_sources or [], ranking_churn),
+        *(_ranking_churn_lines(ranking_churn) if ranking_churn is not None else []),
         *(
             _concentration_lines(period, detection_concentration)
             if detection_concentration is not None
