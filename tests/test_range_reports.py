@@ -174,6 +174,8 @@ class RangeReportTests(unittest.TestCase):
             self.assertIn("Destination context: 1 port/protocol pair", rendered)
             self.assertIn("dominant 22/tcp", rendered)
             self.assertIn("No ASN metadata available", rendered)
+            self.assertIn("Unique source IPs: 1", rendered)
+            self.assertIn("Exactly 1 detection: 1", rendered)
 
 
 if __name__ == "__main__":

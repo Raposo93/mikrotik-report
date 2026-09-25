@@ -2,7 +2,7 @@ import unittest
 
 from helpers import UTC
 
-from mikrotik_reporting.models import empty_period
+from mikrotik_reporting.models import SourceRecurrenceSummary, empty_period
 from mikrotik_reporting.rendering import render_monthly_report, render_weekly_report
 
 
@@ -157,6 +157,65 @@ class RenderingTests(unittest.TestCase):
 
         self.assertIn("Top recurring source IPs", rendered)
         self.assertIn("No detection events recorded.", rendered)
+
+    def test_source_recurrence_is_compact_and_deterministic(self) -> None:
+        period = empty_period("2026-09-21")
+        period["samples"] = 1
+        summary: SourceRecurrenceSummary = {
+            "available": True,
+            "total_source_ips": 10,
+            "one_detection": 6,
+            "two_to_five_detections": 3,
+            "more_than_five_detections": 1,
+        }
+
+        rendered = render_weekly_report(
+            period, UTC, completed=False, source_recurrence=summary
+        )
+
+        expected = (
+            "Source detection recurrence\n"
+            "  Unique source IPs: 10\n"
+            "  Exactly 1 detection: 6\n"
+            "  2–5 detections: 3\n"
+            "  More than 5 detections: 1\n"
+            "  Counts group observed source IPs by detection events, not packets or "
+            "confirmed attacks."
+        )
+        self.assertIn(expected, rendered)
+
+    def test_source_recurrence_empty_and_unavailable_are_explicit(self) -> None:
+        observed = empty_period("2026-09-01")
+        observed["samples"] = 1
+        empty_summary: SourceRecurrenceSummary = {
+            "available": True,
+            "total_source_ips": 0,
+            "one_detection": 0,
+            "two_to_five_detections": 0,
+            "more_than_five_detections": 0,
+        }
+        unavailable_summary: SourceRecurrenceSummary = {
+            **empty_summary,
+            "available": False,
+        }
+
+        empty = render_monthly_report(
+            observed, None, UTC, source_recurrence=empty_summary
+        )
+        unavailable_history = render_monthly_report(
+            observed, None, UTC, source_recurrence=unavailable_summary
+        )
+        no_samples = render_monthly_report(
+            empty_period("2026-09-01"),
+            None,
+            UTC,
+            source_recurrence=empty_summary,
+        )
+
+        self.assertIn("Source detection recurrence", empty)
+        self.assertIn("No source detection events recorded.", empty)
+        self.assertIn("source-detection history is not available", unavailable_history)
+        self.assertIn("no collector samples were recorded", no_samples)
 
     def test_asn_summary_shows_grouped_activity_share_and_coverage(self) -> None:
         rendered = render_weekly_report(

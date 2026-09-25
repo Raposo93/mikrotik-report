@@ -491,7 +491,15 @@ its share of detections with destination context. It does not represent unique
 attacks or confirm that a source was malicious. Historical source totals remain
 visible even when their destination context predates the correlated aggregate;
 the report labels unavailable or partial context rather than inferring it from
-the independent tops. When persisted ASN metadata is available,
+the independent tops. A recurrence summary groups every source IP observed in
+the reporting period—not only entries in the Top 10—into sources with exactly
+one detection, two to five detections, or more than five detections. These are
+detection-event recurrence counts, not packet counts or confirmed attacks. A
+period with collector samples but no source events is shown as empty; a period
+without collector samples or source-detection history is shown as unavailable
+instead of as zero activity. The same exact calendar or explicit-range
+boundaries apply to weekly, monthly, preview, and range reports. When persisted
+ASN metadata is available,
 the source-IP top includes the ASN and organization; report generation never
 performs a network lookup. A separate ASN top groups those detection events by
 persisted ASN and shows detection count, distinct source-IP count, share of all

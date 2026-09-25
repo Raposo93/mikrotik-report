@@ -20,6 +20,7 @@ from mikrotik_reporting.storage import (
     record_detection_batch,
     retain_sent_week,
     save_state,
+    source_recurrence_summary,
     top_detected_ports,
     top_source_detections,
 )
@@ -381,6 +382,88 @@ class StorageTests(unittest.TestCase):
                     {"source_ip": "192.0.2.30", "detections": 2},
                 ],
             )
+
+    def test_source_recurrence_groups_aggregated_period_totals(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.executemany(
+                    "INSERT INTO daily_source_detections "
+                    "(day, source_ip, detections) VALUES (?, ?, ?)",
+                    [
+                        ("2026-09-20", "192.0.2.1", 50),
+                        ("2026-09-21", "192.0.2.10", 1),
+                        ("2026-09-21", "192.0.2.20", 1),
+                        ("2026-09-22", "192.0.2.20", 1),
+                        ("2026-09-21", "192.0.2.30", 5),
+                        ("2026-09-21", "192.0.2.40", 6),
+                        ("2026-09-21", "192.0.2.50", 100),
+                        ("2026-09-28", "192.0.2.60", 1),
+                    ],
+                )
+
+                summary = source_recurrence_summary(
+                    database, "2026-09-21", "2026-09-28"
+                )
+
+            self.assertEqual(
+                summary,
+                {
+                    "available": True,
+                    "total_source_ips": 5,
+                    "one_detection": 1,
+                    "two_to_five_detections": 2,
+                    "more_than_five_detections": 2,
+                },
+            )
+
+    def test_source_recurrence_handles_all_one_off_and_empty_periods(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.executemany(
+                    "INSERT INTO daily_source_detections "
+                    "(day, source_ip, detections) VALUES (?, ?, ?)",
+                    [
+                        ("2026-09-21", "192.0.2.10", 1),
+                        ("2026-09-21", "192.0.2.20", 1),
+                    ],
+                )
+                one_offs = source_recurrence_summary(
+                    database, "2026-09-21", "2026-09-22"
+                )
+                empty = source_recurrence_summary(database, "2026-09-22", "2026-09-23")
+
+            self.assertEqual(one_offs["total_source_ips"], 2)
+            self.assertEqual(one_offs["one_detection"], 2)
+            self.assertEqual(one_offs["two_to_five_detections"], 0)
+            self.assertEqual(one_offs["more_than_five_detections"], 0)
+            self.assertEqual(
+                empty,
+                {
+                    "available": True,
+                    "total_source_ips": 0,
+                    "one_detection": 0,
+                    "two_to_five_detections": 0,
+                    "more_than_five_detections": 0,
+                },
+            )
+
+    def test_source_recurrence_is_unavailable_without_source_history(self) -> None:
+        database = sqlite3.connect(":memory:")
+        try:
+            self.assertEqual(
+                source_recurrence_summary(database, "2026-09-21", "2026-09-22"),
+                {
+                    "available": False,
+                    "total_source_ips": 0,
+                    "one_detection": 0,
+                    "two_to_five_detections": 0,
+                    "more_than_five_detections": 0,
+                },
+            )
+        finally:
+            database.close()
 
     def test_source_destination_context_is_compact_and_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

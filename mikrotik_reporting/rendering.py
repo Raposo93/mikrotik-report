@@ -20,6 +20,7 @@ from .models import (
     PeriodWindow,
     PortDetection,
     SourceDetection,
+    SourceRecurrenceSummary,
 )
 
 
@@ -209,6 +210,29 @@ def _detected_source_lines(sources: list[SourceDetection]) -> list[str]:
     return lines
 
 
+def _source_recurrence_lines(
+    period: Period, summary: SourceRecurrenceSummary
+) -> list[str]:
+    lines = ["Source detection recurrence"]
+    if not summary["available"]:
+        return lines + ["  Unavailable: source-detection history is not available.", ""]
+    if summary["total_source_ips"] == 0:
+        if period["samples"] == 0:
+            return lines + ["  Unavailable: no collector samples were recorded.", ""]
+        return lines + ["  No source detection events recorded.", ""]
+    return lines + [
+        f"  Unique source IPs: {summary['total_source_ips']:,}",
+        f"  Exactly 1 detection: {summary['one_detection']:,}",
+        f"  2–5 detections: {summary['two_to_five_detections']:,}",
+        f"  More than 5 detections: {summary['more_than_five_detections']:,}",
+        (
+            "  Counts group observed source IPs by detection events, not packets or "
+            "confirmed attacks."
+        ),
+        "",
+    ]
+
+
 def _asn_summary_lines(summary: ASNSummary) -> list[str]:
     lines = ["Top source ASNs"]
     total_detections = summary["total_detections"]
@@ -287,6 +311,7 @@ def render_weekly_report(
     top_ports: list[PortDetection] | None = None,
     top_sources: list[SourceDetection] | None = None,
     asn_summary: ASNSummary | None = None,
+    source_recurrence: SourceRecurrenceSummary | None = None,
 ) -> str:
     window = week_window(period["start"])
     lines = [
@@ -298,6 +323,11 @@ def render_weekly_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(
+            _source_recurrence_lines(period, source_recurrence)
+            if source_recurrence is not None
+            else []
+        ),
         *(_asn_summary_lines(asn_summary) if asn_summary is not None else []),
     ]
     if completed:
@@ -322,6 +352,7 @@ def render_monthly_report(
     top_ports: list[PortDetection] | None = None,
     top_sources: list[SourceDetection] | None = None,
     asn_summary: ASNSummary | None = None,
+    source_recurrence: SourceRecurrenceSummary | None = None,
 ) -> str:
     window = month_window(period["start"])
     lines = [
@@ -333,6 +364,11 @@ def render_monthly_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(
+            _source_recurrence_lines(period, source_recurrence)
+            if source_recurrence is not None
+            else []
+        ),
         *(_asn_summary_lines(asn_summary) if asn_summary is not None else []),
         *_comparison_lines(period, previous, timezone_, window),
         "",
@@ -348,6 +384,7 @@ def render_range_report(
     top_ports: list[PortDetection] | None = None,
     top_sources: list[SourceDetection] | None = None,
     asn_summary: ASNSummary | None = None,
+    source_recurrence: SourceRecurrenceSummary | None = None,
 ) -> str:
     if window.kind != "range":
         raise ValueError("Range report requires an explicit range window")
@@ -360,6 +397,11 @@ def render_range_report(
         *_activity_lines(period, timezone_, window),
         *_detected_port_lines(top_ports or []),
         *_detected_source_lines(top_sources or []),
+        *(
+            _source_recurrence_lines(period, source_recurrence)
+            if source_recurrence is not None
+            else []
+        ),
         *(_asn_summary_lines(asn_summary) if asn_summary is not None else []),
     ]
     if not comparable(period, window, timezone_):

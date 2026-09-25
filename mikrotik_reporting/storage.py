@@ -20,6 +20,7 @@ from .models import (
     Period,
     PortDetection,
     SourceDetection,
+    SourceRecurrenceSummary,
     State,
     empty_period,
     initial_state,
@@ -486,6 +487,46 @@ def top_source_detections(
             "dominant_detections": dominant["detections"],
         }
     return results
+
+
+def source_recurrence_summary(
+    database: sqlite3.Connection, start: str, end: str
+) -> SourceRecurrenceSummary:
+    empty: SourceRecurrenceSummary = {
+        "available": False,
+        "total_source_ips": 0,
+        "one_detection": 0,
+        "two_to_five_detections": 0,
+        "more_than_five_detections": 0,
+    }
+    if not database.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'daily_source_detections'"
+    ).fetchone():
+        return empty
+    row = database.execute(
+        "WITH source_totals AS ("
+        "SELECT source_ip, SUM(detections) AS detections "
+        "FROM daily_source_detections WHERE day >= ? AND day < ? "
+        "GROUP BY source_ip"
+        ") "
+        "SELECT COUNT(*) AS total_source_ips, "
+        "COALESCE(SUM(CASE WHEN detections = 1 THEN 1 ELSE 0 END), 0) "
+        "AS one_detection, "
+        "COALESCE(SUM(CASE WHEN detections BETWEEN 2 AND 5 THEN 1 ELSE 0 END), 0) "
+        "AS two_to_five_detections, "
+        "COALESCE(SUM(CASE WHEN detections > 5 THEN 1 ELSE 0 END), 0) "
+        "AS more_than_five_detections "
+        "FROM source_totals",
+        (start, end),
+    ).fetchone()
+    return {
+        "available": True,
+        "total_source_ips": row["total_source_ips"],
+        "one_detection": row["one_detection"],
+        "two_to_five_detections": row["two_to_five_detections"],
+        "more_than_five_detections": row["more_than_five_detections"],
+    }
 
 
 def asn_detection_summary(

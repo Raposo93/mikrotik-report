@@ -74,6 +74,14 @@ class ASNSummary(TypedDict):
     resolved_source_ips: int
 
 
+class SourceRecurrenceSummary(TypedDict):
+    available: bool
+    total_source_ips: int
+    one_detection: int
+    two_to_five_detections: int
+    more_than_five_detections: int
+
+
 class Aggregate(TypedDict):
     totals: dict[str, dict[str, int]]
     max_sizes: dict[str, int]

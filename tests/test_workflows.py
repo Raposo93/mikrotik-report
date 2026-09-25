@@ -147,6 +147,16 @@ class WorkflowTests(unittest.TestCase):
                         "resolved_source_ips": 0,
                     },
                 )
+                self.assertEqual(
+                    first_sender.call_args.kwargs["source_recurrence"],
+                    {
+                        "available": True,
+                        "total_source_ips": 1,
+                        "one_detection": 1,
+                        "two_to_five_detections": 0,
+                        "more_than_five_detections": 0,
+                    },
+                )
             with closing(open_database_existing(path)) as database, database:
                 state = load_state(database, "2026-09-21")
                 state["period"]["samples"] = 2016
@@ -230,6 +240,16 @@ class WorkflowTests(unittest.TestCase):
                         },
                     }
                 ],
+            )
+            self.assertEqual(
+                sender.call_args.kwargs["source_recurrence"],
+                {
+                    "available": True,
+                    "total_source_ips": 1,
+                    "one_detection": 1,
+                    "two_to_five_detections": 0,
+                    "more_than_five_detections": 0,
+                },
             )
 
     def test_daily_aggregates_split_month_inside_same_week(self) -> None:
@@ -687,6 +707,16 @@ class WorkflowTests(unittest.TestCase):
                         }
                     ],
                 )
+                self.assertEqual(
+                    sender.call_args.kwargs["source_recurrence"],
+                    {
+                        "available": True,
+                        "total_source_ips": 1,
+                        "one_detection": 1,
+                        "two_to_five_detections": 0,
+                        "more_than_five_detections": 0,
+                    },
+                )
                 process_monthly_reports(
                     database,
                     shared,
@@ -799,6 +829,8 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("Packets dropped: 30", kwargs["input"])
             self.assertIn("192.0.2.50", kwargs["input"])
             self.assertIn("dominant 6881/udp", kwargs["input"])
+            self.assertIn("Unique source IPs: 1", kwargs["input"])
+            self.assertIn("Exactly 1 detection: 1", kwargs["input"])
             with closing(open_database_readonly(path)) as database:
                 self.assertEqual(load_state(database, "2026-09-14"), state)
 
