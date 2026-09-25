@@ -111,6 +111,27 @@ The persistent `run` mode uses three explicit positive-integer intervals:
 control when the existing workflows are checked; weekly and monthly report
 boundaries still use calendar periods in `MIKROTIK_REPORT_TIMEZONE`.
 
+## Upgrading from v0.1.2
+
+Version `0.1.3` preserves source-IP-to-destination context for new detection
+events and advances SQLite `user_version` from `5` to `6`. Stop all collectors
+and report processes, then back up the SQLite database before upgrading. The
+first writing command after the upgrade creates the new compact daily aggregate
+atomically and retains all existing counter, detection, delivery, and ASN data.
+No configuration or RouterOS changes are required; collection reuses the
+existing dedicated first-detection log stream.
+
+Existing independent source-IP and destination-port totals cannot reconstruct
+their original relationships, so the migration does not backfill correlated
+history. Reports keep those historical source totals, mark destination context
+as unavailable when no correlated data exists, and show explicit coverage when
+a requested period spans data from before and after the upgrade. Correlated
+history begins with newly collected detection events after migration.
+
+After the database has migrated, `v0.1.2` will reject schema version `6`.
+Restore the pre-upgrade backup to roll back; do not downgrade `user_version`
+manually.
+
 ## Upgrading from v0.1.1
 
 Version `0.1.2` includes a Python SMTP notifier in the container image, so the
@@ -144,14 +165,6 @@ the pre-upgrade backup if a rollback is required; do not downgrade the
 latest persisted ASN metadata for their source IP. ASN refreshes can therefore
 change the ASN attribution shown when the same historical range is rendered
 later; the application does not retain point-in-time ASN assignments.
-
-Source-to-destination context advances SQLite `user_version` from `5` to `6`.
-The migration creates an empty correlated aggregate and does not attempt to
-reconstruct source-to-port relationships from the existing independent source
-and destination-port totals. Reports keep those historical source totals, mark
-destination context as unavailable when no correlated data exists, and show
-explicit contextualized-detection coverage when a requested period spans both
-old and new data.
 
 ## RouterOS detection-event setup
 
