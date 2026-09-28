@@ -79,8 +79,9 @@ base interval.
 Use an absolute `MIKROTIK_REPORT_DB` path outside the checkout. The SQLite
 database contains last counter values, current/pending weekly totals, the last
 12 successfully emailed weekly aggregates, and daily aggregates for exact month
-boundaries and later historical queries. Monthly delivery status is stored in
-the same database. Daily destination-port counts, daily source-IP detection
+boundaries and later historical queries. Monthly delivery status and the size
+recorded for each delivered weekly or monthly report are stored in the same
+database. Daily destination-port counts, daily source-IP detection
 counts, daily source-IP-to-`port/protocol` detection counts, and a bounded
 cursor of the RouterOS memory entries seen during the previous poll are also
 stored. The correlated counts remain compact daily aggregates; individual
@@ -111,6 +112,21 @@ The persistent `run` mode collects every `MIKROTIK_COLLECT_INTERVAL_SECONDS`
 `HH:MM` in `MIKROTIK_REPORT_TIMEZONE`. Existing `MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS`
 and `MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS` settings should be replaced with
 the corresponding check-time settings when upgrading.
+
+## Upgrading from v0.1.5
+
+Version `0.1.6` adds the current SQLite database file size and its signed byte
+change since the last delivered report of the same type. A new SQLite table
+records weekly and monthly sizes after successful delivery; the first report of
+each type shows its change as unavailable. Preview and range reports do not
+change delivery history. There are no new configuration or RouterOS requirements.
+
+Stop collection and reporting, back up the SQLite database, update the code or
+container image, and restart. The first writing command migrates SQLite
+`user_version` from `6` to `7` without deleting historical data. To roll back
+to `v0.1.5` after migration, stop all processes and restore the pre-upgrade
+database backup; that version rejects schema version `7`. Do not manually
+downgrade `user_version`.
 
 ## Upgrading from v0.1.4
 
