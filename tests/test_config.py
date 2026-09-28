@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,26 +51,26 @@ class ConfigTests(unittest.TestCase):
         ):
             load_asn_config()
 
-    def test_run_intervals_have_explicit_defaults(self) -> None:
+    def test_run_schedule_has_explicit_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             config = load_run_config()
 
         self.assertEqual(config.collect_interval_seconds, 300)
-        self.assertEqual(config.weekly_check_interval_seconds, 86400)
-        self.assertEqual(config.monthly_check_interval_seconds, 86400)
+        self.assertEqual(config.weekly_check_time, time(0, 15))
+        self.assertEqual(config.monthly_check_time, time(0, 30))
 
-    def test_run_intervals_are_configurable_positive_integers(self) -> None:
+    def test_run_schedule_is_configurable(self) -> None:
         environment = {
             "MIKROTIK_COLLECT_INTERVAL_SECONDS": "60",
-            "MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS": "3600",
-            "MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS": "7200",
+            "MIKROTIK_WEEKLY_CHECK_TIME": "01:25",
+            "MIKROTIK_MONTHLY_CHECK_TIME": "23:45",
         }
         with patch.dict(os.environ, environment, clear=True):
             config = load_run_config()
 
         self.assertEqual(config.collect_interval_seconds, 60)
-        self.assertEqual(config.weekly_check_interval_seconds, 3600)
-        self.assertEqual(config.monthly_check_interval_seconds, 7200)
+        self.assertEqual(config.weekly_check_time, time(1, 25))
+        self.assertEqual(config.monthly_check_time, time(23, 45))
 
         for invalid in ("0", "-1", "1.5", ""):
             with (
@@ -82,6 +83,17 @@ class ConfigTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "must be a positive integer"),
             ):
                 load_run_config()
+
+        for name in ("MIKROTIK_WEEKLY_CHECK_TIME", "MIKROTIK_MONTHLY_CHECK_TIME"):
+            for invalid in ("", "1:25", "24:00", "12:60", "12:30:00", "abc"):
+                with (
+                    self.subTest(name=name, invalid=invalid),
+                    patch.dict(os.environ, {name: invalid}, clear=True),
+                    self.assertRaisesRegex(
+                        ValueError, "must be a time in HH:MM format"
+                    ),
+                ):
+                    load_run_config()
 
     def test_mail_notifier_path_is_explicit(self) -> None:
         with patch.dict(

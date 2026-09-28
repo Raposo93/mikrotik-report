@@ -6,6 +6,7 @@ import os
 import ssl
 import urllib.parse
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -43,8 +44,8 @@ class MailConfig:
 @dataclass(frozen=True)
 class RunConfig:
     collect_interval_seconds: int
-    weekly_check_interval_seconds: int
-    monthly_check_interval_seconds: int
+    weekly_check_time: time
+    monthly_check_time: time
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,22 @@ def _positive_integer(name: str, default: int) -> int:
     if value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
+
+
+def _clock_time(name: str, default: str) -> time:
+    raw = os.environ.get(name, default).strip()
+    try:
+        hour, minute = raw.split(":")
+        if (
+            len(hour) != 2
+            or len(minute) != 2
+            or not hour.isdigit()
+            or not minute.isdigit()
+        ):
+            raise ValueError
+        return time(int(hour), int(minute))
+    except ValueError as error:
+        raise ValueError(f"{name} must be a time in HH:MM format") from error
 
 
 def _boolean(name: str, default: bool = False) -> bool:
@@ -166,12 +183,8 @@ def load_run_config() -> RunConfig:
         collect_interval_seconds=_positive_integer(
             "MIKROTIK_COLLECT_INTERVAL_SECONDS", 300
         ),
-        weekly_check_interval_seconds=_positive_integer(
-            "MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS", 86400
-        ),
-        monthly_check_interval_seconds=_positive_integer(
-            "MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS", 86400
-        ),
+        weekly_check_time=_clock_time("MIKROTIK_WEEKLY_CHECK_TIME", "00:15"),
+        monthly_check_time=_clock_time("MIKROTIK_MONTHLY_CHECK_TIME", "00:30"),
     )
 
 

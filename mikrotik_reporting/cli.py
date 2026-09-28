@@ -78,6 +78,7 @@ def main() -> None:
         monthly_mail = load_mail_config(monthly=True)
         run_foreground(
             load_run_config(),
+            timezone=common.timezone,
             collect_action=lambda current: collect(common, routeros, current, asn),
             weekly_action=lambda current: send_weekly_reports(
                 common, weekly_mail, current

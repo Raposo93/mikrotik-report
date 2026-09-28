@@ -7,9 +7,11 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as clock_time
 from threading import Event
 from types import FrameType
+from zoneinfo import ZoneInfo
 
 from .config import RunConfig
 
@@ -23,6 +25,14 @@ class ScheduledJob:
     action: JobAction
 
 
+@dataclass(frozen=True)
+class CalendarJob:
+    name: str
+    check_time: clock_time
+    timezone: ZoneInfo
+    action: JobAction
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -33,8 +43,21 @@ def _next_deadline(deadline: float, interval: int, completed_at: float) -> float
     return deadline + periods * interval
 
 
+def _next_calendar_deadline(
+    after: datetime, check_time: clock_time, zone: ZoneInfo
+) -> datetime:
+    local = after.astimezone(zone)
+    day = local.date()
+    while True:
+        wall = datetime.combine(day, check_time)
+        candidate = wall.replace(tzinfo=zone).astimezone(timezone.utc)
+        if candidate > after:
+            return candidate
+        day += timedelta(days=1)
+
+
 def run_scheduler(
-    jobs: Sequence[ScheduledJob],
+    jobs: Sequence[ScheduledJob | CalendarJob],
     *,
     stopped: Callable[[], bool],
     wait: Callable[[float], object],
@@ -43,24 +66,45 @@ def run_scheduler(
 ) -> None:
     if not jobs:
         raise ValueError("At least one scheduled job is required")
-    if any(job.interval_seconds <= 0 for job in jobs):
+    if any(isinstance(job, ScheduledJob) and job.interval_seconds <= 0 for job in jobs):
         raise ValueError("Scheduled job intervals must be positive")
 
     started_at = monotonic()
-    deadlines = [started_at] * len(jobs)
+    interval_deadlines = [started_at] * len(jobs)
+    calendar_deadlines: list[datetime | None] = [None] * len(jobs)
     while not stopped():
         current = monotonic()
         for index, job in enumerate(jobs):
-            if deadlines[index] > current:
-                continue
+            if isinstance(job, ScheduledJob):
+                if interval_deadlines[index] > current:
+                    continue
+            else:
+                deadline = calendar_deadlines[index]
+                if deadline is not None and deadline > now():
+                    continue
             job.action(now())
             current = monotonic()
-            deadlines[index] = _next_deadline(
-                deadlines[index], job.interval_seconds, current
-            )
+            if isinstance(job, ScheduledJob):
+                interval_deadlines[index] = _next_deadline(
+                    interval_deadlines[index], job.interval_seconds, current
+                )
+            else:
+                calendar_deadlines[index] = _next_calendar_deadline(
+                    now(), job.check_time, job.timezone
+                )
             if stopped():
                 return
-        delay = max(0.0, min(deadlines) - monotonic())
+        current = monotonic()
+        wall_now = now()
+        delays = []
+        for index, job in enumerate(jobs):
+            if isinstance(job, ScheduledJob):
+                delays.append(interval_deadlines[index] - current)
+            else:
+                deadline = calendar_deadlines[index]
+                if deadline is not None:
+                    delays.append((deadline - wall_now).total_seconds())
+        delay = max(0.0, min(60.0, *delays))
         wait(delay)
 
 
@@ -84,20 +128,23 @@ def _termination_event() -> Iterator[Event]:
 def run_foreground(
     config: RunConfig,
     *,
+    timezone: ZoneInfo,
     collect_action: JobAction,
     weekly_action: JobAction,
     monthly_action: JobAction,
 ) -> None:
     jobs = (
         ScheduledJob("collect", config.collect_interval_seconds, collect_action),
-        ScheduledJob(
+        CalendarJob(
             "weekly-report",
-            config.weekly_check_interval_seconds,
+            config.weekly_check_time,
+            timezone,
             weekly_action,
         ),
-        ScheduledJob(
+        CalendarJob(
             "monthly-report",
-            config.monthly_check_interval_seconds,
+            config.monthly_check_time,
+            timezone,
             monthly_action,
         ),
     )

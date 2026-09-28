@@ -104,12 +104,13 @@ The service user needs write access to its parent directory. The program sets
 the database file to mode `600`. Keep `.env` private as it contains the RouterOS
 password; neither it nor the database belongs in Git.
 
-The persistent `run` mode uses three explicit positive-integer intervals:
-`MIKROTIK_COLLECT_INTERVAL_SECONDS` (default `300`),
-`MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS` (default `86400`), and
-`MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS` (default `86400`). These intervals
-control when the existing workflows are checked; weekly and monthly report
-boundaries still use calendar periods in `MIKROTIK_REPORT_TIMEZONE`.
+The persistent `run` mode collects every `MIKROTIK_COLLECT_INTERVAL_SECONDS`
+(default `300`). It checks pending weekly and monthly reports daily at
+`MIKROTIK_WEEKLY_CHECK_TIME` (default `00:15`) and
+`MIKROTIK_MONTHLY_CHECK_TIME` (default `00:30`), respectively. Times use
+`HH:MM` in `MIKROTIK_REPORT_TIMEZONE`. Existing `MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS`
+and `MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS` settings should be replaced with
+the corresponding check-time settings when upgrading.
 
 ## Upgrading from v0.1.3
 
@@ -253,11 +254,14 @@ python3 mikrotik_report.py run
 ```
 
 Collection, the weekly report check, and the monthly report check each run once
-at startup, sequentially in that order. They then run at their configured
-independent intervals. Jobs never overlap inside the process; if a workflow
-runs past one or more of its deadlines, those missed invocations are skipped
-instead of being started concurrently. The next report check still processes
-all pending completed periods from SQLite.
+at startup, sequentially in that order. Collection then runs by interval; report
+checks run at their configured local calendar times, regardless of process start
+time. Startup checks recover reports missed during downtime. SQLite delivery
+state prevents resending delivered periods. Jobs never overlap inside the
+process; if a workflow runs past a deadline, the next check still processes all
+pending completed periods from SQLite. During a daylight-saving clock change,
+an ambiguous check time runs at its first occurrence; a nonexistent local time
+runs after the clock jumps forward.
 
 `SIGINT` and `SIGTERM` request a clean stop. An in-progress workflow is allowed
 to finish before the process exits. Operational failures remain visible and
@@ -304,7 +308,7 @@ The variables required by `run` are:
 
 The timezone, rule table, detection-log names, ASN enrichment policy, report
 subjects, sender, SMTP TLS mode, ports, CA bundles, timeouts, and scheduling
-intervals are optional or have documented defaults in `.env.example`. Keep the
+settings are optional or have documented defaults in `.env.example`. Keep the
 database at the declared persistent path. The image already sets the notifier
 path, though it can still be overridden with another compatible executable:
 
@@ -607,8 +611,8 @@ units. The implementation lives in the `mikrotik_reporting` package:
 * `workflows.py` coordinates transactions, collection, and direct invocation of
   the configured mail transport;
 * `send_mail.py` is the image's plain-text SMTP notifier;
-* `scheduler.py` runs those workflows sequentially on explicit intervals and
-  handles foreground-process termination;
+* `scheduler.py` runs those workflows sequentially on collection intervals and
+  local calendar report times, and handles foreground-process termination;
 * `cli.py` maps the six commands (`collect`, `report`, `report-monthly`,
   `test-report`, `range`, and `run`) to those workflows.
 
