@@ -19,10 +19,12 @@ from mikrotik_reporting.storage import (
     open_database_existing,
     open_database_readonly,
     pending_asn_ips,
+    previous_report_database_size,
     record_asn_lookup,
     record_detection_batch,
     retain_sent_week,
     save_day,
+    save_report_database_size,
     save_state,
     source_recurrence_summary,
     top_detected_ports,
@@ -496,12 +498,41 @@ class StorageTests(unittest.TestCase):
                     "daily_source_detections",
                     "daily_source_port_detections",
                     "ip_asn_metadata",
+                    "report_database_sizes",
                 ):
                     self.assertIsNotNone(
                         database.execute(
                             "SELECT 1 FROM sqlite_master WHERE name = ?", (table,)
                         ).fetchone()
                     )
+
+    def test_database_size_migration_and_comparable_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            with closing(open_database(path)) as database, database:
+                database.execute("DROP TABLE report_database_sizes")
+                database.execute("PRAGMA user_version = 6")
+            with closing(open_database_readonly(path)) as database:
+                self.assertIsNone(
+                    previous_report_database_size(database, "weekly", "2026-09-21")
+                )
+            with closing(open_database_existing(path)) as database, database:
+                self.assertIsNone(
+                    previous_report_database_size(database, "weekly", "2026-09-21")
+                )
+                save_report_database_size(database, "weekly", "2026-09-14", 8192)
+                save_report_database_size(database, "monthly", "2026-09-01", 12288)
+                self.assertEqual(
+                    previous_report_database_size(database, "weekly", "2026-09-21"),
+                    8192,
+                )
+                self.assertIsNone(
+                    previous_report_database_size(database, "weekly", "2026-09-14")
+                )
+                self.assertEqual(
+                    previous_report_database_size(database, "monthly", "2026-10-01"),
+                    12288,
+                )
 
     def test_future_schema_version_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

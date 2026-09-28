@@ -484,6 +484,14 @@ Range totals include samples persisted inside the requested dates, including
 ranges that cross weekly or monthly boundaries. Address-list maxima cover all
 sampled days and the latest size comes from the last sampled day. The detected
 destination-port and recurring-source tops use the same exact date boundaries.
+All reports show the current size in bytes of the configured SQLite database
+file at generation time. Weekly and monthly emails also show the signed byte
+change from the last successfully delivered report of the same type. The first
+report of each type after this upgrade shows the change as unavailable. Preview
+reports compare with the last delivered weekly report without saving a new size;
+range reports show change as unavailable because arbitrary ranges have no
+comparable delivery history. The size is current file state, not a historical
+measurement for the report's calendar period.
 The quality block compares observed samples with the nominal five-minute cadence
 over the exact interval. Partial coverage is marked explicitly and totals then
 describe only observed samples; a range with no persisted samples reports

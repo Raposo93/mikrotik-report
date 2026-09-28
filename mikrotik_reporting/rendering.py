@@ -494,6 +494,22 @@ def _report_footer(period: Period, *, comparisons: bool = True) -> list[str]:
     return lines
 
 
+def _database_size_lines(
+    size_bytes: int | None, previous_size_bytes: int | None
+) -> list[str]:
+    if size_bytes is None:
+        return []
+    change = (
+        "unavailable"
+        if previous_size_bytes is None
+        else f"{size_bytes - previous_size_bytes:+,} bytes"
+    )
+    return [
+        f"SQLite database: {size_bytes:,} bytes; change since previous comparable report: {change}.",
+        "",
+    ]
+
+
 def render_weekly_report(
     period: Period,
     timezone_: ZoneInfo,
@@ -507,6 +523,8 @@ def render_weekly_report(
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
     ranking_churn: RankingChurnSummary | None = None,
+    database_size_bytes: int | None = None,
+    previous_database_size_bytes: int | None = None,
 ) -> str:
     window = week_window(period["start"])
     previous_start = (
@@ -520,6 +538,7 @@ def render_weekly_report(
             f"({timezone_.key}, end exclusive)"
         ),
         "",
+        *_database_size_lines(database_size_bytes, previous_database_size_bytes),
         *_insight_lines(
             period,
             window,
@@ -572,6 +591,8 @@ def render_monthly_report(
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
     ranking_churn: RankingChurnSummary | None = None,
+    database_size_bytes: int | None = None,
+    previous_database_size_bytes: int | None = None,
 ) -> str:
     window = month_window(period["start"])
     lines = [
@@ -580,6 +601,7 @@ def render_monthly_report(
             f"({timezone_.key}, end exclusive)"
         ),
         "",
+        *_database_size_lines(database_size_bytes, previous_database_size_bytes),
         *_insight_lines(
             period,
             window,
@@ -628,6 +650,7 @@ def render_range_report(
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
     ranking_churn: RankingChurnSummary | None = None,
+    database_size_bytes: int | None = None,
 ) -> str:
     if window.kind != "range":
         raise ValueError("Range report requires an explicit range window")
@@ -637,6 +660,7 @@ def render_range_report(
             f"({timezone_.key}, start inclusive, end exclusive)"
         ),
         "",
+        *_database_size_lines(database_size_bytes, None),
         *_insight_lines(
             period,
             window,

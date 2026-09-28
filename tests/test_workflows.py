@@ -33,6 +33,7 @@ from mikrotik_reporting.storage import (
     open_database_existing,
     open_database_readonly,
     pending_asn_ips,
+    previous_report_database_size,
     record_detection_batch,
     save_day,
     save_state,
@@ -48,6 +49,43 @@ from mikrotik_reporting.workflows import (
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_weekly_database_size_tracks_successful_deliveries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "report.sqlite3"
+            shared = common(path)
+            delivery = mail(Path(temporary))
+            with closing(open_database(path)) as database, database:
+                save_state(database, initial_state("2026-09-14"))
+            with (
+                closing(open_database_existing(path)) as database,
+                patch("mikrotik_reporting.workflows._deliver_report") as deliver,
+                redirect_stdout(StringIO()),
+            ):
+                process_weekly_reports(database, shared, delivery, at(21, 1))
+                first_body = deliver.call_args.args[2]
+                first_size = previous_report_database_size(
+                    database, "weekly", "2026-09-21"
+                )
+                self.assertIsNotNone(first_size)
+                assert first_size is not None
+                self.assertIn(
+                    f"SQLite database: {first_size:,} bytes; change since "
+                    "previous comparable report: unavailable.",
+                    first_body,
+                )
+                process_weekly_reports(database, shared, delivery, at(28, 1))
+                second_body = deliver.call_args.args[2]
+                second_size = previous_report_database_size(
+                    database, "weekly", "2026-09-28"
+                )
+                self.assertIsNotNone(second_size)
+                assert second_size is not None
+                self.assertIn(
+                    f"change since previous comparable report: "
+                    f"{second_size - first_size:+,} bytes.",
+                    second_body,
+                )
+
     def test_ranking_churn_monthly_and_range_use_matching_prior_window(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,
@@ -180,6 +218,9 @@ class WorkflowTests(unittest.TestCase):
                 pending = load_state(database, "2026-09-21")["pending"]
                 self.assertEqual([item["start"] for item in pending], ["2026-09-14"])
                 self.assertEqual(load_history(database, "2026-09-21"), {})
+                self.assertIsNone(
+                    previous_report_database_size(database, "weekly", "2026-09-21")
+                )
             with (
                 closing(open_database_existing(path)) as database,
                 database,
@@ -755,6 +796,10 @@ class WorkflowTests(unittest.TestCase):
                 self.assertRaisesRegex(OSError, "mail failed"),
             ):
                 process_monthly_reports(database, shared, delivery, now)
+            with closing(open_database_readonly(path)) as database:
+                self.assertIsNone(
+                    previous_report_database_size(database, "monthly", "2026-10-01")
+                )
             with (
                 closing(open_database_existing(path)) as database,
                 patch("mikrotik_reporting.workflows._send_monthly_report") as sender,
@@ -767,6 +812,13 @@ class WorkflowTests(unittest.TestCase):
                     "SELECT sent_at FROM monthly_reports"
                 ).fetchone()["sent_at"]
                 self.assertEqual(sent_at, now.isoformat())
+                self.assertEqual(
+                    previous_report_database_size(database, "monthly", "2026-10-01"),
+                    sender.call_args.kwargs["database_size_bytes"],
+                )
+                self.assertIsNone(
+                    sender.call_args.kwargs["previous_database_size_bytes"]
+                )
 
     def test_monthly_sender_uses_previous_month_and_skips_current(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

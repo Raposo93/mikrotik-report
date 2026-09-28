@@ -31,7 +31,7 @@ from .models import (
     initial_state,
 )
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 HISTORY_WEEKS = 12
 
 
@@ -209,6 +209,20 @@ def _migrate_to_6(database: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_to_7(database: sqlite3.Connection) -> None:
+    database.executescript("""
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS report_database_sizes (
+            kind TEXT NOT NULL CHECK (kind IN ('weekly', 'monthly')),
+            start TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+            PRIMARY KEY (kind, start)
+        );
+        PRAGMA user_version = 7;
+        COMMIT;
+    """)
+
+
 MIGRATIONS = {
     1: _migrate_to_1,
     2: _migrate_to_2,
@@ -216,7 +230,34 @@ MIGRATIONS = {
     4: _migrate_to_4,
     5: _migrate_to_5,
     6: _migrate_to_6,
+    7: _migrate_to_7,
 }
+
+
+def previous_report_database_size(
+    database: sqlite3.Connection, kind: str, start: str
+) -> int | None:
+    # A read-only preview may open a database that has not been migrated yet.
+    if not database.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = 'report_database_sizes'"
+    ).fetchone():
+        return None
+    row = database.execute(
+        "SELECT size_bytes FROM report_database_sizes "
+        "WHERE kind = ? AND start < ? ORDER BY start DESC LIMIT 1",
+        (kind, start),
+    ).fetchone()
+    return int(row[0]) if row is not None else None
+
+
+def save_report_database_size(
+    database: sqlite3.Connection, kind: str, start: str, size_bytes: int
+) -> None:
+    database.execute(
+        "INSERT INTO report_database_sizes (kind, start, size_bytes) VALUES (?, ?, ?)",
+        (kind, start, size_bytes),
+    )
 
 
 def ensure_schema(database: sqlite3.Connection) -> None:

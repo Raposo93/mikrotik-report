@@ -56,11 +56,13 @@ from .storage import (
     open_database_existing,
     open_database_readonly,
     pending_asn_ips,
+    previous_report_database_size,
     queue_completed_months,
     record_asn_lookup,
     record_detection_batch,
     retain_sent_week,
     save_day,
+    save_report_database_size,
     save_state,
     source_recurrence_summary,
     top_detected_ports,
@@ -144,6 +146,8 @@ def _send_weekly_report(
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
     ranking_churn: RankingChurnSummary | None = None,
+    database_size_bytes: int | None = None,
+    previous_database_size_bytes: int | None = None,
 ) -> None:
     subject = f"{mail.subject} ({period['start']})"
     body = render_weekly_report(
@@ -158,6 +162,8 @@ def _send_weekly_report(
         detection_concentration=detection_concentration,
         detection_novelty=detection_novelty,
         ranking_churn=ranking_churn,
+        database_size_bytes=database_size_bytes,
+        previous_database_size_bytes=previous_database_size_bytes,
     )
     if preview_at is not None:
         subject = f"[TEST] {subject}"
@@ -181,6 +187,8 @@ def _send_monthly_report(
     detection_concentration: DetectionConcentrationSummary | None = None,
     detection_novelty: DetectionNoveltySummary | None = None,
     ranking_churn: RankingChurnSummary | None = None,
+    database_size_bytes: int | None = None,
+    previous_database_size_bytes: int | None = None,
 ) -> None:
     subject = f"{mail.subject} ({period['start'][:7]})"
     body = render_monthly_report(
@@ -194,6 +202,8 @@ def _send_monthly_report(
         detection_concentration,
         detection_novelty,
         ranking_churn,
+        database_size_bytes,
+        previous_database_size_bytes,
     )
     _deliver_report(mail, subject, body)
 
@@ -231,6 +241,10 @@ def process_weekly_reports(
             database, window, detection_lookback(window)
         )
         churn = _ranking_churn(database, common, period, window, sources, ports)
+        size_bytes = common.state.stat().st_size
+        previous_size_bytes = previous_report_database_size(
+            database, "weekly", period["start"]
+        )
         _send_weekly_report(
             mail,
             common,
@@ -243,10 +257,13 @@ def process_weekly_reports(
             detection_concentration=concentration,
             detection_novelty=novelty,
             ranking_churn=churn,
+            database_size_bytes=size_bytes,
+            previous_database_size_bytes=previous_size_bytes,
         )
         state["pending"].pop(0)
         save_state(database, state)
         retain_sent_week(database, period)
+        save_report_database_size(database, "weekly", period["start"], size_bytes)
         database.commit()
         print(f"Sent report for week {period['start']}")
 
@@ -284,6 +301,10 @@ def process_monthly_reports(
             database, window, detection_lookback(window)
         )
         churn = _ranking_churn(database, common, period, window, sources, ports)
+        size_bytes = common.state.stat().st_size
+        previous_size_bytes = previous_report_database_size(
+            database, "monthly", period["start"]
+        )
         _send_monthly_report(
             mail,
             common,
@@ -296,8 +317,11 @@ def process_monthly_reports(
             detection_concentration=concentration,
             detection_novelty=novelty,
             ranking_churn=churn,
+            database_size_bytes=size_bytes,
+            previous_database_size_bytes=previous_size_bytes,
         )
         mark_month_sent(database, start, now.isoformat())
+        save_report_database_size(database, "monthly", start, size_bytes)
         database.commit()
         print(f"Sent report for month {start[:7]}")
 
@@ -415,6 +439,9 @@ def send_preview(
         churn = _ranking_churn(
             database, common, state["period"], window, sources, ports, preview=True
         )
+        previous_size_bytes = previous_report_database_size(
+            database, "weekly", state["period"]["start"]
+        )
     if state["last_sample_at"] is None:
         raise ValueError("Run collect before sending a test report")
     apply_snapshot(state, snapshot, now, common.timezone)
@@ -430,6 +457,8 @@ def send_preview(
         detection_concentration=concentration,
         detection_novelty=novelty,
         ranking_churn=churn,
+        database_size_bytes=common.state.stat().st_size,
+        previous_database_size_bytes=previous_size_bytes,
     )
     print(f"Sent test report for week {state['period']['start']} (state unchanged)")
 
@@ -470,6 +499,7 @@ def print_range_report(common: CommonConfig, start: date, end: date) -> None:
             concentration,
             novelty,
             churn,
+            common.state.stat().st_size,
         ),
         end="",
     )

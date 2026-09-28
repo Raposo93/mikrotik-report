@@ -2,6 +2,7 @@ import unittest
 
 from helpers import UTC
 
+from mikrotik_reporting.aggregation import range_window
 from mikrotik_reporting.models import (
     DetectionConcentrationSummary,
     DetectionNoveltySummary,
@@ -9,10 +10,50 @@ from mikrotik_reporting.models import (
     SourceRecurrenceSummary,
     empty_period,
 )
-from mikrotik_reporting.rendering import render_monthly_report, render_weekly_report
+from mikrotik_reporting.rendering import (
+    render_monthly_report,
+    render_range_report,
+    render_weekly_report,
+)
 
 
 class RenderingTests(unittest.TestCase):
+    def test_database_size_and_absolute_change(self) -> None:
+        period = empty_period("2026-09-21")
+        for previous, expected in (
+            (None, "unavailable"),
+            (4096, "+4,096 bytes"),
+            (8192, "+0 bytes"),
+            (12288, "-4,096 bytes"),
+        ):
+            with self.subTest(previous=previous):
+                report = render_weekly_report(
+                    period,
+                    UTC,
+                    database_size_bytes=8192,
+                    previous_database_size_bytes=previous,
+                )
+                self.assertIn(
+                    "SQLite database: 8,192 bytes; change since previous "
+                    f"comparable report: {expected}.",
+                    report,
+                )
+        monthly = render_monthly_report(
+            empty_period("2026-09-01"),
+            None,
+            UTC,
+            database_size_bytes=8192,
+            previous_database_size_bytes=4096,
+        )
+        self.assertIn("comparable report: +4,096 bytes.", monthly)
+        ranged = render_range_report(
+            period,
+            range_window("2026-09-21", "2026-09-22"),
+            UTC,
+            database_size_bytes=8192,
+        )
+        self.assertIn("comparable report: unavailable.", ranged)
+
     def test_summary_selects_five_deterministic_auditable_statements(self) -> None:
         previous = empty_period("2026-09-14")
         current = empty_period("2026-09-21")
