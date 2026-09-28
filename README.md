@@ -112,6 +112,25 @@ The persistent `run` mode collects every `MIKROTIK_COLLECT_INTERVAL_SECONDS`
 and `MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS` settings should be replaced with
 the corresponding check-time settings when upgrading.
 
+## Upgrading from v0.1.4
+
+Version `0.1.5` schedules the weekly and monthly checks in persistent `run`
+mode at local calendar times rather than fixed intervals from process startup.
+Both checks still run immediately at startup to deliver pending completed
+periods after downtime. Collection remains interval-based. Replace
+`MIKROTIK_WEEKLY_CHECK_INTERVAL_SECONDS` and
+`MIKROTIK_MONTHLY_CHECK_INTERVAL_SECONDS` in the private environment file with
+`MIKROTIK_WEEKLY_CHECK_TIME=00:15` and
+`MIKROTIK_MONTHLY_CHECK_TIME=00:30`, or choose other `HH:MM` times in
+`MIKROTIK_REPORT_TIMEZONE`. The old interval settings no longer control report
+checks.
+
+There is no RouterOS, collector, report-output, or SQLite schema change;
+`user_version` remains `6`. Stop the running process before updating the code or
+container image, retain the SQLite database, update the private environment
+file, and restart. Rolling back to `v0.1.4` needs no database restore, but
+requires restoring the old interval settings if their previous values matter.
+
 ## Upgrading from v0.1.3
 
 Version `0.1.4` adds report-only summaries from the existing daily detection
